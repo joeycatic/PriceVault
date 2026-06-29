@@ -1,20 +1,47 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 import { useSupabase } from '@/components/providers/SupabaseProvider'
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
-  const { supabase, session } = useSupabase()
+  const searchParams = useSearchParams()
+  const { supabase } = useSupabase()
   const [email, setEmail] = useState('')
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const errorMessage = error ?? (searchParams.has('auth_error')
+    ? 'Der Anmeldelink ist ungültig oder abgelaufen. Bitte fordere einen neuen an.'
+    : null)
 
   useEffect(() => {
-    if (session) router.replace('/dashboard')
-  }, [router, session])
+    const fragment = new URLSearchParams(window.location.hash.slice(1))
+    const accessToken = fragment.get('access_token')
+    const refreshToken = fragment.get('refresh_token')
+    if (!accessToken || !refreshToken) return
+
+    // Implicit-flow tokens only exist in the browser fragment. Remove them from
+    // the address bar before persisting the session in Supabase's cookie storage.
+    window.history.replaceState(null, '', window.location.pathname)
+    void supabase.auth
+      .setSession({ access_token: accessToken, refresh_token: refreshToken })
+      .then(({ error: sessionError }) => {
+        if (sessionError) {
+          setError('Der Anmeldelink ist ungültig oder abgelaufen. Bitte fordere einen neuen an.')
+          return
+        }
+        router.replace('/dashboard')
+        router.refresh()
+      })
+  }, [router, supabase])
+
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => {
+      if (data.user) router.replace('/dashboard')
+    })
+  }, [router, supabase])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -71,7 +98,7 @@ export default function LoginPage() {
                 placeholder="name@unternehmen.de"
               />
             </label>
-            {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
+            {errorMessage && <p className="text-sm text-red-300" role="alert">{errorMessage}</p>}
             <button className="button-primary w-full" disabled={status === 'sending'}>
               {status === 'sending' ? 'Wird gesendet …' : 'Anmeldelink senden'}
             </button>
@@ -82,3 +109,10 @@ export default function LoginPage() {
   )
 }
 
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" aria-label="Anmeldung wird geladen" />}>
+      <LoginContent />
+    </Suspense>
+  )
+}

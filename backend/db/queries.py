@@ -59,7 +59,16 @@ async def update_competitor(
 
 
 async def soft_delete_competitor(tenant_id: str, competitor_id: str) -> bool:
-    return bool(await update_competitor(tenant_id, competitor_id, {"active": False}))
+    updated = bool(await update_competitor(tenant_id, competitor_id, {"active": False}))
+    if updated:
+        await _execute(
+            lambda: get_supabase()
+            .table("competitor_products")
+            .update({"active": False})
+            .eq("tenant_id", tenant_id)
+            .eq("competitor_id", competitor_id)
+        )
+    return updated
 
 
 async def list_products(tenant_id: str, active_only: bool = False) -> list[dict[str, Any]]:
@@ -93,7 +102,16 @@ async def update_product(
 
 
 async def soft_delete_product(tenant_id: str, product_id: str) -> bool:
-    return bool(await update_product(tenant_id, product_id, {"active": False}))
+    updated = bool(await update_product(tenant_id, product_id, {"active": False}))
+    if updated:
+        await _execute(
+            lambda: get_supabase()
+            .table("competitor_products")
+            .update({"active": False})
+            .eq("tenant_id", tenant_id)
+            .eq("product_id", product_id)
+        )
+    return updated
 
 
 async def list_product_mappings(tenant_id: str, product_id: str) -> list[dict[str, Any]]:
@@ -269,4 +287,3 @@ async def list_alert_events(tenant_id: str, limit: int) -> list[dict[str, Any]]:
 async def insert_alert_event(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("alert_events").insert(values))
     return rows[0]
-

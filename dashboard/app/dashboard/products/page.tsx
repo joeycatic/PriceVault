@@ -1,5 +1,7 @@
 import { revalidatePath } from 'next/cache'
 
+import { MutationButton } from '@/components/ui/MutationButton'
+import { MappingForm, ProductForm } from '@/components/ui/ProductForms'
 import { createClient } from '@/lib/supabase/server'
 import type { Competitor, CompetitorProduct, Product, Tenant } from '@/lib/types'
 import { formatPrice } from '@/lib/utils'
@@ -10,7 +12,7 @@ type MappingRow = CompetitorProduct & {
 }
 
 export default async function ProductsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -25,6 +27,7 @@ export default async function ProductsPage() {
           .from('competitor_products')
           .select('*, products(name), competitors(shop_name)')
           .eq('tenant_id', tenant.id)
+          .eq('active', true)
           .order('created_at'),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }]
@@ -35,44 +38,86 @@ export default async function ProductsPage() {
 
   async function createProduct(formData: FormData) {
     'use server'
-    if (!tenant) return
-    const client = createClient()
-    const price = String(formData.get('our_price') ?? '').replace(',', '.')
-    await client.from('products').insert({
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const name = String(formData.get('name') ?? '').trim()
+    const rawPrice = String(formData.get('our_price') ?? '').trim().replace(',', '.')
+    const price = rawPrice ? Number(rawPrice) : null
+    if (!name || (price !== null && (!Number.isFinite(price) || price < 0))) {
+      return { ok: false, message: 'Bitte prüfe Produktname und Preis.' }
+    }
+    const { error } = await client.from('products').insert({
       tenant_id: tenant.id,
-      name: String(formData.get('name')),
+      name,
       our_sku: String(formData.get('our_sku') || '') || null,
-      our_price: price ? Number(price) : null,
+      our_price: price,
       our_currency: 'EUR',
     })
+    if (error) return { ok: false, message: 'Das Produkt konnte nicht angelegt werden.' }
     revalidatePath('/dashboard/products')
+    return { ok: true, message: 'Produkt wurde angelegt.' }
   }
 
   async function createMapping(formData: FormData) {
     'use server'
-    if (!tenant) return
-    const client = createClient()
-    await client.from('competitor_products').insert({
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const productId = String(formData.get('product_id') ?? '')
+    const competitorId = String(formData.get('competitor_id') ?? '')
+    const competitorUrl = String(formData.get('competitor_url') ?? '').trim()
+    if (!productId || !competitorId || !competitorUrl) {
+      return { ok: false, message: 'Produkt, Mitbewerber und URL sind erforderlich.' }
+    }
+    const { error } = await client.from('competitor_products').insert({
       tenant_id: tenant.id,
-      product_id: String(formData.get('product_id')),
-      competitor_id: String(formData.get('competitor_id')),
-      competitor_url: String(formData.get('competitor_url')),
+      product_id: productId,
+      competitor_id: competitorId,
+      competitor_url: competitorUrl,
       competitor_sku: String(formData.get('competitor_sku') || '') || null,
       selector_price: String(formData.get('selector_price') || '') || null,
     })
+    if (error) {
+      return { ok: false, message: 'Die Zuordnung konnte nicht gespeichert werden. Prüfe, ob sie bereits existiert.' }
+    }
     revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: 'Preisquelle wurde zugeordnet.' }
   }
 
   async function deleteMapping(formData: FormData) {
     'use server'
-    if (!tenant) return
-    const client = createClient()
-    await client
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const { error } = await client
       .from('competitor_products')
       .delete()
       .eq('tenant_id', tenant.id)
       .eq('id', String(formData.get('id')))
+    if (error) return { ok: false, message: 'Zuordnung konnte nicht entfernt werden.' }
     revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: 'Zuordnung entfernt.' }
+  }
+
+  async function deactivateProduct(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const productId = String(formData.get('id'))
+    const { error } = await client
+      .from('products')
+      .update({ active: false })
+      .eq('tenant_id', tenant.id)
+      .eq('id', productId)
+    if (error) return { ok: false, message: 'Produkt konnte nicht deaktiviert werden.' }
+    await client
+      .from('competitor_products')
+      .update({ active: false })
+      .eq('tenant_id', tenant.id)
+      .eq('product_id', productId)
+    revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: 'Produkt deaktiviert.' }
   }
 
   return (
@@ -91,63 +136,36 @@ export default async function ProductsPage() {
             <section className="panel p-5 sm:p-6" aria-labelledby="new-product">
               <p className="eyebrow">Katalog</p>
               <h2 id="new-product" className="mb-5 mt-2 text-xl font-semibold">Produkt anlegen</h2>
-              <form action={createProduct} className="space-y-4">
-                <label>
-                  <span className="field-label">Produktname</span>
-                  <input className="field" name="name" required placeholder="Mars Hydro SP3000" />
-                </label>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label>
-                    <span className="field-label">Eigene Artikelnummer</span>
-                    <input className="field" name="our_sku" placeholder="SKU-1001" />
-                  </label>
-                  <label>
-                    <span className="field-label">Eigener Preis</span>
-                    <input className="field" name="our_price" inputMode="decimal" placeholder="199,00" />
-                  </label>
-                </div>
-                <button className="button-primary w-full sm:w-auto">Produkt anlegen</button>
-              </form>
+              <ProductForm action={createProduct} />
             </section>
 
             <section className="panel p-5 sm:p-6" aria-labelledby="new-mapping">
               <p className="eyebrow">Preisquelle</p>
               <h2 id="new-mapping" className="mb-5 mt-2 text-xl font-semibold">Zuordnung anlegen</h2>
-              <form action={createMapping} className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label>
-                    <span className="field-label">Produkt</span>
-                    <select className="field" name="product_id" required defaultValue="">
-                      <option value="" disabled>Produkt wählen</option>
-                      {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    <span className="field-label">Mitbewerber</span>
-                    <select className="field" name="competitor_id" required defaultValue="">
-                      <option value="" disabled>Shop wählen</option>
-                      {competitors.map((competitor) => <option key={competitor.id} value={competitor.id}>{competitor.shop_name}</option>)}
-                    </select>
-                  </label>
-                </div>
-                <label>
-                  <span className="field-label">Produkt-URL beim Mitbewerber</span>
-                  <input className="field" name="competitor_url" type="url" required placeholder="https://shop.de/produkt" />
-                </label>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label>
-                    <span className="field-label">Deren Artikelnummer</span>
-                    <input className="field" name="competitor_sku" placeholder="Optional" />
-                  </label>
-                  <label>
-                    <span className="field-label">Eigener Preis-Selektor</span>
-                    <input className="field font-mono" name="selector_price" placeholder="Optional" />
-                  </label>
-                </div>
-                <button className="button-primary w-full sm:w-auto" disabled={!products.length || !competitors.length}>Zuordnung speichern</button>
-              </form>
+              <MappingForm action={createMapping} products={products} competitors={competitors} />
             </section>
           </div>
+
+          <section className="panel overflow-hidden" aria-labelledby="product-list">
+            <div className="border-b border-vault-700 px-5 py-4">
+              <h2 id="product-list" className="font-semibold">Aktive Produkte</h2>
+            </div>
+            {products.length ? (
+              <div className="divide-y divide-vault-700/70">
+                {products.map((product) => (
+                  <article key={product.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="font-semibold">{product.name}</h3>
+                      <p className="mt-1 font-mono text-xs text-vault-500">{product.our_sku ?? 'Keine SKU'} · {formatPrice(product.our_price, product.our_currency)}</p>
+                    </div>
+                    <MutationButton id={product.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivateProduct} />
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="p-6 text-sm text-vault-300">Noch keine Produkte angelegt.</p>
+            )}
+          </section>
 
           <section className="panel overflow-hidden" aria-labelledby="mapping-list">
             <div className="border-b border-vault-700 px-5 py-4">
@@ -175,10 +193,7 @@ export default async function ProductsPage() {
                           <td className="px-4 py-4">{mapping.competitors?.shop_name ?? 'Unbekannt'}</td>
                           <td className="max-w-xs truncate px-4 py-4 font-mono text-xs text-vault-500">{mapping.competitor_url}</td>
                           <td className="px-5 py-4 text-right">
-                            <form action={deleteMapping}>
-                              <input type="hidden" name="id" value={mapping.id} />
-                              <button className="text-xs font-semibold text-red-300 hover:text-red-200">Entfernen</button>
-                            </form>
+                            <MutationButton id={mapping.id} label="Entfernen" pendingLabel="Wird entfernt …" action={deleteMapping} />
                           </td>
                         </tr>
                       )
@@ -195,4 +210,3 @@ export default async function ProductsPage() {
     </>
   )
 }
-

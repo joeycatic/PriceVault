@@ -12,7 +12,7 @@ const conditionLabels: Record<Alert['condition'], string> = {
 }
 
 export default async function AlertsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -32,7 +32,7 @@ export default async function AlertsPage() {
   async function saveAction(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
-    const client = createClient()
+    const client = await createClient()
     const values = {
       product_id: String(formData.get('product_id') || '') || null,
       competitor_id: String(formData.get('competitor_id') || '') || null,
@@ -53,7 +53,7 @@ export default async function AlertsPage() {
   async function deleteAlert(formData: FormData) {
     'use server'
     if (!tenant) return
-    const client = createClient()
+    const client = await createClient()
     await client.from('alerts').delete().eq('tenant_id', tenant.id).eq('id', String(formData.get('id')))
     revalidatePath('/dashboard/alerts')
   }
@@ -119,4 +119,3 @@ export default async function AlertsPage() {
     </>
   )
 }
-

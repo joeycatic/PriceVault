@@ -10,7 +10,7 @@ create table public.tenants (
   user_id     uuid not null references auth.users(id) on delete cascade,
   shop_name   text not null,
   shop_url    text not null,
-  plan        text not null default 'trial',
+  plan        text not null default 'trial' check (plan in ('trial', 'starter', 'pro')),
   created_at  timestamptz not null default now(),
   unique(user_id)
 );
@@ -22,7 +22,7 @@ create table public.competitors (
   base_url        text not null,
   selector_price  text,
   selector_stock  text,
-  scrape_freq_h   int not null default 12,
+  scrape_freq_h   int not null default 12 check (scrape_freq_h between 1 and 168),
   active          boolean not null default true,
   notes           text,
   last_scraped_at timestamptz,
@@ -34,7 +34,7 @@ create table public.products (
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
   name            text not null,
   our_sku         text,
-  our_price       numeric(10,2),
+  our_price       numeric(10,2) check (our_price is null or our_price >= 0),
   our_currency    text not null default 'EUR',
   active          boolean not null default true,
   created_at      timestamptz not null default now()
@@ -74,12 +74,12 @@ create table public.alerts (
   tenant_id             uuid not null references public.tenants(id) on delete cascade,
   product_id            uuid references public.products(id) on delete cascade,
   competitor_id         uuid references public.competitors(id) on delete cascade,
-  condition             text not null,
-  threshold             numeric(10,2) not null,
+  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs')),
+  threshold             numeric(10,2) not null check (threshold > 0),
   notify_email          text not null,
   active                boolean not null default true,
   last_triggered_at     timestamptz,
-  cooldown_h            int not null default 24,
+  cooldown_h            int not null default 24 check (cooldown_h between 1 and 720),
   created_at            timestamptz not null default now()
 );
 
@@ -109,27 +109,35 @@ returns uuid language sql stable as $$
 $$;
 
 create policy "tenant: own row" on public.tenants
-  for all using (user_id = auth.uid());
+  for all using (user_id = auth.uid())
+  with check (user_id = auth.uid());
 
 create policy "competitors: own tenant" on public.competitors
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
 create policy "products: own tenant" on public.products
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
 create policy "competitor_products: own tenant" on public.competitor_products
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
 create policy "price_snapshots: own tenant" on public.price_snapshots
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
 create policy "alerts: own tenant" on public.alerts
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
 create policy "alert_events: own tenant" on public.alert_events
-  for all using (tenant_id = public.my_tenant_id());
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
 
-create or replace view public.v_latest_prices as
+create or replace view public.v_latest_prices
+with (security_invoker = true) as
 select distinct on (cp.id)
   cp.id                   as competitor_product_id,
   cp.tenant_id,
@@ -149,5 +157,15 @@ from public.competitor_products cp
 join public.products p    on p.id = cp.product_id
 join public.competitors c on c.id = cp.competitor_id
 left join public.price_snapshots ps on ps.competitor_product_id = cp.id
+where cp.active = true and p.active = true and c.active = true
 order by cp.id, ps.scraped_at desc;
 
+grant usage on schema public to authenticated, service_role;
+grant select, insert, update, delete on public.tenants, public.competitors,
+  public.products, public.competitor_products, public.alerts to authenticated;
+grant select on public.price_snapshots, public.alert_events, public.v_latest_prices to authenticated;
+grant all on public.tenants, public.competitors, public.products,
+  public.competitor_products, public.price_snapshots, public.alerts,
+  public.alert_events to service_role;
+
+notify pgrst, 'reload schema';

@@ -7,7 +7,7 @@ import type { Competitor, Tenant } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
 export default async function CompetitorsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -21,7 +21,7 @@ export default async function CompetitorsPage() {
   async function saveAction(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
-    const client = createClient()
+    const client = await createClient()
     const { error } = await client.from('competitors').insert({
       tenant_id: tenant.id,
       shop_name: String(formData.get('shop_name')),
@@ -67,13 +67,19 @@ export default async function CompetitorsPage() {
   async function remove(formData: FormData) {
     'use server'
     if (!tenant) return
-    const client = createClient()
+    const client = await createClient()
     await client
       .from('competitors')
       .update({ active: false })
       .eq('tenant_id', tenant.id)
       .eq('id', String(formData.get('id')))
+    await client
+      .from('competitor_products')
+      .update({ active: false })
+      .eq('tenant_id', tenant.id)
+      .eq('competitor_id', String(formData.get('id')))
     revalidatePath('/dashboard/competitors')
+    revalidatePath('/dashboard')
   }
 
   return (
@@ -127,4 +133,3 @@ export default async function CompetitorsPage() {
     </>
   )
 }
-

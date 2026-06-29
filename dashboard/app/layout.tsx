@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 
 import { SupabaseProvider } from '@/components/providers/SupabaseProvider'
-import { createClient } from '@/lib/supabase/server'
 
 import './globals.css'
 
@@ -10,18 +9,12 @@ export const metadata: Metadata = {
   description: 'Behalte den Überblick über deine Mitbewerberpreise.',
 }
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const supabase = createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de">
       <body>
-        <SupabaseProvider initialSession={session}>{children}</SupabaseProvider>
+        <SupabaseProvider>{children}</SupabaseProvider>
       </body>
     </html>
   )
 }
-

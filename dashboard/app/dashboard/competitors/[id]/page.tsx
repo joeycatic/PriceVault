@@ -6,27 +6,30 @@ import { CompetitorForm } from '@/components/ui/CompetitorForm'
 import { createClient } from '@/lib/supabase/server'
 import type { Competitor, Tenant } from '@/lib/types'
 
-export default async function EditCompetitorPage({ params }: { params: { id: string } }) {
-  const supabase = createClient()
+export default async function EditCompetitorPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
   const tenant = tenantData as Tenant | null
   if (!tenant) notFound()
+  const tenantId = tenant.id
 
   const { data } = await supabase
     .from('competitors')
     .select('*')
-    .eq('tenant_id', tenant.id)
-    .eq('id', params.id)
+    .eq('tenant_id', tenantId)
+    .eq('id', id)
     .maybeSingle()
   const competitor = data as Competitor | null
   if (!competitor) notFound()
+  const competitorId = competitor.id
 
   async function saveAction(formData: FormData) {
     'use server'
-    const client = createClient()
+    const client = await createClient()
     const { error } = await client
       .from('competitors')
       .update({
@@ -36,11 +39,11 @@ export default async function EditCompetitorPage({ params }: { params: { id: str
         selector_stock: String(formData.get('selector_stock') || '') || null,
         scrape_freq_h: Number(formData.get('scrape_freq_h')),
       })
-      .eq('tenant_id', tenant.id)
-      .eq('id', competitor.id)
+      .eq('tenant_id', tenantId)
+      .eq('id', competitorId)
     if (error) return { ok: false, message: 'Die Änderungen konnten nicht gespeichert werden.' }
     revalidatePath('/dashboard/competitors')
-    revalidatePath(`/dashboard/competitors/${competitor.id}`)
+    revalidatePath(`/dashboard/competitors/${competitorId}`)
     return { ok: true, message: 'Änderungen wurden gespeichert.' }
   }
 
@@ -49,7 +52,7 @@ export default async function EditCompetitorPage({ params }: { params: { id: str
     try {
       const response = await fetch(`${process.env.BACKEND_URL}/scrape/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenant.id },
+        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenantId },
         body: JSON.stringify({
           url: input.url,
           selector_price: input.selectorPrice || null,
@@ -86,4 +89,3 @@ export default async function EditCompetitorPage({ params }: { params: { id: str
     </>
   )
 }
-

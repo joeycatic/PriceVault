@@ -61,6 +61,9 @@ export function Sidebar({ shopName }: { shopName: string }) {
       <div className="hidden border-t border-vault-700 p-5 lg:block">
         <p className="mb-1 truncate text-sm font-semibold">{shopName}</p>
         <p className="mb-4 text-[10px] uppercase tracking-[0.16em] text-vault-500">Mandant aktiv</p>
+        <Link href="/onboarding" className="mb-2 flex min-h-10 items-center text-xs font-semibold text-vault-300 hover:text-vault-lime">
+          Einrichtung öffnen →
+        </Link>
         <button onClick={logout} className="button-secondary w-full" type="button">
           Abmelden
         </button>
@@ -68,4 +71,3 @@ export function Sidebar({ shopName }: { shopName: string }) {
     </aside>
   )
 }
-

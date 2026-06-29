@@ -3,10 +3,16 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function HomePage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  redirect(user ? '/dashboard' : '/login')
-}
+  if (!user) redirect('/login')
 
+  const { data: tenant } = await supabase
+    .from('tenants')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  redirect(tenant ? '/dashboard' : '/onboarding')
+}

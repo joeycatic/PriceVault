@@ -5,10 +5,26 @@ import { createClient } from '@/lib/supabase/server'
 export async function GET(request: Request) {
   const url = new URL(request.url)
   const code = url.searchParams.get('code')
-  if (code) {
-    const supabase = createClient()
-    await supabase.auth.exchangeCodeForSession(code)
+  if (!code) {
+    return NextResponse.redirect(new URL('/login?auth_error=missing_code', url.origin))
   }
-  return NextResponse.redirect(new URL('/dashboard', url.origin))
-}
 
+  const supabase = await createClient()
+  const { error } = await supabase.auth.exchangeCodeForSession(code)
+  if (error) {
+    console.error('[auth/callback] code exchange failed', {
+      message: error.message,
+      status: error.status,
+    })
+    return NextResponse.redirect(new URL('/login?auth_error=exchange_failed', url.origin))
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const { data: tenant } = user
+    ? await supabase.from('tenants').select('id').eq('user_id', user.id).maybeSingle()
+    : { data: null }
+
+  return NextResponse.redirect(new URL(tenant ? '/dashboard' : '/onboarding', url.origin))
+}
