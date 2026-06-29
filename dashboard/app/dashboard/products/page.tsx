@@ -1,14 +1,58 @@
 import { revalidatePath } from 'next/cache'
 
+import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { MutationButton } from '@/components/ui/MutationButton'
-import { MappingForm, ProductForm } from '@/components/ui/ProductForms'
+import { CompanyForm, MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
+import { runManualScrape } from '@/app/dashboard/scrape-actions'
+import { parsePriceInput } from '@/lib/priceInput'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, CompetitorProduct, Product, Tenant } from '@/lib/types'
-import { formatPrice } from '@/lib/utils'
+import type { Competitor, CompetitorProduct, LatestPrice, Product, Tenant } from '@/lib/types'
+import { formatPrice, formatRelativeTime } from '@/lib/utils'
 
 type MappingRow = CompetitorProduct & {
   products: { name: string } | null
   competitors: { shop_name: string } | null
+}
+
+function validHttpUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function splitProductLine(line: string) {
+  const delimiter = line.includes(';') ? ';' : line.includes('\t') ? '\t' : ','
+  const parts = line.split(delimiter).map((part) => part.trim()).filter(Boolean)
+  if (parts.length <= 3) return parts
+
+  return [parts[0], parts[1], parts.slice(2).join(delimiter)]
+}
+
+function parseProductImport(input: string) {
+  return input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(splitProductLine)
+    .filter((parts, index) => {
+      if (index !== 0) return true
+      const firstCell = parts[0]?.toLowerCase().replace(/\s|_/g, '') ?? ''
+      return !['name', 'produkt', 'product', 'productname', 'produktname'].includes(firstCell)
+    })
+    .map((parts) => {
+      const [name = '', second = '', third = ''] = parts
+      const priceCandidate = third || (parsePriceInput(second) !== null ? second : '')
+      const sku = third ? second : priceCandidate ? '' : second
+      return {
+        name: name.trim(),
+        our_sku: sku.trim() || null,
+        our_price: priceCandidate ? parsePriceInput(priceCandidate) : null,
+        our_currency: 'EUR',
+      }
+    })
 }
 
 export default async function ProductsPage() {
@@ -19,7 +63,7 @@ export default async function ProductsPage() {
   const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
   const tenant = tenantData as Tenant | null
 
-  const [productResult, competitorResult, mappingResult] = tenant
+  const [productResult, competitorResult, mappingResult, latestResult] = tenant
     ? await Promise.all([
         supabase.from('products').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
         supabase.from('competitors').select('*').eq('tenant_id', tenant.id).eq('active', true).order('shop_name'),
@@ -29,21 +73,28 @@ export default async function ProductsPage() {
           .eq('tenant_id', tenant.id)
           .eq('active', true)
           .order('created_at'),
+        supabase.from('v_latest_prices').select('*').eq('tenant_id', tenant.id),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }]
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }]
 
   const products = (productResult.data ?? []) as Product[]
   const competitors = (competitorResult.data ?? []) as Competitor[]
   const mappings = (mappingResult.data ?? []) as MappingRow[]
+  const latestRows = (latestResult.data ?? []) as LatestPrice[]
+  const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
+  const lastScrapedAt = latestRows
+    .map((row) => row.scraped_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
 
   async function createProduct(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
     const client = await createClient()
     const name = String(formData.get('name') ?? '').trim()
-    const rawPrice = String(formData.get('our_price') ?? '').trim().replace(',', '.')
-    const price = rawPrice ? Number(rawPrice) : null
-    if (!name || (price !== null && (!Number.isFinite(price) || price < 0))) {
+    const rawPrice = String(formData.get('our_price') ?? '').trim()
+    const price = rawPrice ? parsePriceInput(rawPrice) : null
+    if (!name || (rawPrice && price === null) || (price !== null && price < 0)) {
       return { ok: false, message: 'Bitte prüfe Produktname und Preis.' }
     }
     const { error } = await client.from('products').insert({
@@ -56,6 +107,50 @@ export default async function ProductsPage() {
     if (error) return { ok: false, message: 'Das Produkt konnte nicht angelegt werden.' }
     revalidatePath('/dashboard/products')
     return { ok: true, message: 'Produkt wurde angelegt.' }
+  }
+
+  async function importProducts(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const pasted = String(formData.get('products_csv') ?? '').trim()
+    const file = formData.get('products_file')
+    const fileText = file instanceof File && file.size > 0 ? await file.text() : ''
+    const rows = parseProductImport([pasted, fileText].filter(Boolean).join('\n')).filter((row) => row.name)
+
+    if (!rows.length) return { ok: false, message: 'Füge mindestens ein Produkt ein oder lade eine CSV-Datei hoch.' }
+    if (rows.length > 250) return { ok: false, message: 'Bitte importiere maximal 250 Produkte auf einmal.' }
+    if (rows.some((row) => row.our_price !== null && row.our_price < 0)) {
+      return { ok: false, message: 'Mindestens ein Preis ist ungültig.' }
+    }
+
+    const { error } = await client.from('products').insert(rows.map((row) => ({ ...row, tenant_id: tenant.id })))
+    if (error) return { ok: false, message: 'Die Produkte konnten nicht importiert werden.' }
+
+    revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: `${rows.length} Produkt(e) importiert.` }
+  }
+
+  async function updateCompany(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const shopName = String(formData.get('shop_name') ?? '').trim()
+    const shopUrl = String(formData.get('shop_url') ?? '').trim()
+    if (shopName.length < 2 || !validHttpUrl(shopUrl)) {
+      return { ok: false, message: 'Bitte prüfe Firmenname und Shop-URL.' }
+    }
+
+    const { error } = await client
+      .from('tenants')
+      .update({ shop_name: shopName, shop_url: shopUrl })
+      .eq('id', tenant.id)
+    if (error) return { ok: false, message: 'Unternehmen konnte nicht gespeichert werden.' }
+
+    revalidatePath('/dashboard', 'layout')
+    revalidatePath('/dashboard/products')
+    return { ok: true, message: 'Unternehmen gespeichert.' }
   }
 
   async function createMapping(formData: FormData) {
@@ -123,22 +218,70 @@ export default async function ProductsPage() {
   return (
     <>
       <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Katalog / Zuordnung</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Produkte</h1>
-        <p className="mt-2 text-sm text-vault-300">Eigene Produkte mit den Produktseiten deiner Mitbewerber verbinden.</p>
+        <p className="eyebrow">Unternehmen / Katalog / Preisquellen</p>
+        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Deine Firma & Produkte</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
+          Pflege deine eigenen Produkte, importiere größere Listen und verbinde sie mit den Produktseiten deiner Mitbewerber.
+        </p>
       </header>
 
       {!tenant ? (
         <div className="panel p-6 text-sm text-amber-100">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="space-y-6">
+          <section className="panel p-5 sm:p-6" aria-labelledby="company-profile">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div>
+                <p className="eyebrow">Eigene Firma</p>
+                <h2 id="company-profile" className="mt-2 text-xl font-semibold">Unternehmensprofil</h2>
+                <p className="mt-2 text-sm leading-6 text-vault-300">
+                  Diese Daten sind die Basis für deinen Katalog, deine Referenzpreise und spätere Preisalarme.
+                </p>
+                <CompanyForm action={updateCompany} shopName={tenant.shop_name} shopUrl={tenant.shop_url} />
+              </div>
+              <div className="grid gap-px overflow-hidden border border-vault-700 bg-vault-700">
+                {[
+                  ['Aktive Produkte', products.length],
+                  ['Preisquellen', mappings.length],
+                  ['Letzter Abruf', lastScrapedAt ? formatRelativeTime(lastScrapedAt) : 'Noch nie'],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-vault-900 px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{label}</p>
+                    <p className="mt-1 font-mono text-lg font-semibold">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="panel p-5 sm:p-6" aria-labelledby="scrape-clarity">
+            <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+              <div>
+                <p className="eyebrow">Preisabruf</p>
+                <h2 id="scrape-clarity" className="mt-2 text-xl font-semibold">Wann werden Preise gescraped?</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">
+                  PriceVault ruft aktive Preisquellen automatisch alle 12 Stunden ab. Nach dem Anlegen oder Ändern einer Quelle kannst du sofort einen manuellen Abruf starten.
+                </p>
+              </div>
+              <ManualScrapeButton action={runManualScrape} disabled={!mappings.length} />
+            </div>
+          </section>
+
           <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="panel p-5 sm:p-6" aria-labelledby="new-product">
-              <p className="eyebrow">Katalog</p>
-              <h2 id="new-product" className="mb-5 mt-2 text-xl font-semibold">Produkt anlegen</h2>
+              <p className="eyebrow">Importoption 01</p>
+              <h2 id="new-product" className="mb-5 mt-2 text-xl font-semibold">Ein Produkt manuell anlegen</h2>
               <ProductForm action={createProduct} />
             </section>
 
+            <section className="panel p-5 sm:p-6" aria-labelledby="bulk-import">
+              <p className="eyebrow">Importoption 02 / 03</p>
+              <h2 id="bulk-import" className="mb-5 mt-2 text-xl font-semibold">Produkte per CSV importieren</h2>
+              <ProductImportForm action={importProducts} />
+            </section>
+          </div>
+
+          <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="panel p-5 sm:p-6" aria-labelledby="new-mapping">
               <p className="eyebrow">Preisquelle</p>
               <h2 id="new-mapping" className="mb-5 mt-2 text-xl font-semibold">Zuordnung anlegen</h2>
@@ -179,6 +322,8 @@ export default async function ProductsPage() {
                       <th className="px-5 py-4">Produkt</th>
                       <th className="px-4 py-4">Eigener Preis</th>
                       <th className="px-4 py-4">Mitbewerber</th>
+                      <th className="px-4 py-4">Letzter Abruf</th>
+                      <th className="px-4 py-4">Gefundener Preis</th>
                       <th className="px-4 py-4">Produkt-URL</th>
                       <th className="px-5 py-4 text-right">Aktion</th>
                     </tr>
@@ -186,13 +331,26 @@ export default async function ProductsPage() {
                   <tbody>
                     {mappings.map((mapping) => {
                       const product = products.find((item) => item.id === mapping.product_id)
+                      const latest = latestByMapping.get(mapping.id)
                       return (
                         <tr key={mapping.id} className="border-t border-vault-700/70">
                           <td className="px-5 py-4 font-semibold">{mapping.products?.name ?? 'Unbekannt'}</td>
                           <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(product?.our_price ?? null)}</td>
                           <td className="px-4 py-4">{mapping.competitors?.shop_name ?? 'Unbekannt'}</td>
+                          <td className="px-4 py-4 text-xs text-vault-300">
+                            {latest?.scraped_at ? formatRelativeTime(latest.scraped_at) : 'Noch nie'}
+                            {latest?.scrape_ok === false && <span className="mt-1 block text-red-300">Fehlgeschlagen</span>}
+                          </td>
+                          <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(latest?.competitor_price ?? null)}</td>
                           <td className="max-w-xs truncate px-4 py-4 font-mono text-xs text-vault-500">{mapping.competitor_url}</td>
-                          <td className="px-5 py-4 text-right">
+                          <td className="space-y-2 px-5 py-4 text-right">
+                            <ManualScrapeButton
+                              action={runManualScrape}
+                              competitorProductId={mapping.id}
+                              label="Jetzt abrufen"
+                              pendingLabel="Ruft ab …"
+                              compact
+                            />
                             <MutationButton id={mapping.id} label="Entfernen" pendingLabel="Wird entfernt …" action={deleteMapping} />
                           </td>
                         </tr>
