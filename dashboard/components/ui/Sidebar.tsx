@@ -9,8 +9,10 @@ import { cn } from '@/lib/utils'
 const links = [
   { href: '/dashboard', label: 'Preisübersicht', mark: '01' },
   { href: '/dashboard/competitors', label: 'Mitbewerber', mark: '02' },
-  { href: '/dashboard/products', label: 'Produkte', mark: '03' },
-  { href: '/dashboard/alerts', label: 'Preisalarme', mark: '04' },
+  { href: '/dashboard/company', label: 'Unternehmen', mark: '03' },
+  { href: '/dashboard/products', label: 'Produkte', mark: '04' },
+  { href: '/dashboard/alerts', label: 'Preisalarme', mark: '05' },
+  { href: '/dashboard/wiki', label: 'Wiki', mark: '06' },
 ]
 
 export function Sidebar({ shopName }: { shopName: string }) {

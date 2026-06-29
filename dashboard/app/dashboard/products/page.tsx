@@ -2,7 +2,7 @@ import { revalidatePath } from 'next/cache'
 
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { MutationButton } from '@/components/ui/MutationButton'
-import { CompanyForm, MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
+import { MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
 import { parsePriceInput } from '@/lib/priceInput'
 import { createClient } from '@/lib/supabase/server'
@@ -12,15 +12,6 @@ import { formatPrice, formatRelativeTime } from '@/lib/utils'
 type MappingRow = CompetitorProduct & {
   products: { name: string } | null
   competitors: { shop_name: string } | null
-}
-
-function validHttpUrl(value: string) {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 function splitProductLine(line: string) {
@@ -82,10 +73,6 @@ export default async function ProductsPage() {
   const mappings = (mappingResult.data ?? []) as MappingRow[]
   const latestRows = (latestResult.data ?? []) as LatestPrice[]
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
-  const lastScrapedAt = latestRows
-    .map((row) => row.scraped_at)
-    .filter((value): value is string => Boolean(value))
-    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
 
   async function createProduct(formData: FormData) {
     'use server'
@@ -130,27 +117,6 @@ export default async function ProductsPage() {
     revalidatePath('/dashboard/products')
     revalidatePath('/dashboard')
     return { ok: true, message: `${rows.length} Produkt(e) importiert.` }
-  }
-
-  async function updateCompany(formData: FormData) {
-    'use server'
-    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
-    const client = await createClient()
-    const shopName = String(formData.get('shop_name') ?? '').trim()
-    const shopUrl = String(formData.get('shop_url') ?? '').trim()
-    if (shopName.length < 2 || !validHttpUrl(shopUrl)) {
-      return { ok: false, message: 'Bitte prüfe Firmenname und Shop-URL.' }
-    }
-
-    const { error } = await client
-      .from('tenants')
-      .update({ shop_name: shopName, shop_url: shopUrl })
-      .eq('id', tenant.id)
-    if (error) return { ok: false, message: 'Unternehmen konnte nicht gespeichert werden.' }
-
-    revalidatePath('/dashboard', 'layout')
-    revalidatePath('/dashboard/products')
-    return { ok: true, message: 'Unternehmen gespeichert.' }
   }
 
   async function createMapping(formData: FormData) {
@@ -218,10 +184,11 @@ export default async function ProductsPage() {
   return (
     <>
       <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Unternehmen / Katalog / Preisquellen</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Deine Firma & Produkte</h1>
+        <p className="eyebrow">Katalog / Preisquellen</p>
+        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Produkte</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
           Pflege deine eigenen Produkte, importiere größere Listen und verbinde sie mit den Produktseiten deiner Mitbewerber.
+          Dein Unternehmensprofil liegt jetzt im eigenen Bereich.
         </p>
       </header>
 
@@ -229,31 +196,6 @@ export default async function ProductsPage() {
         <div className="panel p-6 text-sm text-amber-100">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="space-y-6">
-          <section className="panel p-5 sm:p-6" aria-labelledby="company-profile">
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-              <div>
-                <p className="eyebrow">Eigene Firma</p>
-                <h2 id="company-profile" className="mt-2 text-xl font-semibold">Unternehmensprofil</h2>
-                <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Diese Daten sind die Basis für deinen Katalog, deine Referenzpreise und spätere Preisalarme.
-                </p>
-                <CompanyForm action={updateCompany} shopName={tenant.shop_name} shopUrl={tenant.shop_url} />
-              </div>
-              <div className="grid gap-px overflow-hidden border border-vault-700 bg-vault-700">
-                {[
-                  ['Aktive Produkte', products.length],
-                  ['Preisquellen', mappings.length],
-                  ['Letzter Abruf', lastScrapedAt ? formatRelativeTime(lastScrapedAt) : 'Noch nie'],
-                ].map(([label, value]) => (
-                  <div key={label} className="bg-vault-900 px-4 py-3">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{label}</p>
-                    <p className="mt-1 font-mono text-lg font-semibold">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
           <section className="panel p-5 sm:p-6" aria-labelledby="scrape-clarity">
             <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
               <div>
