@@ -149,12 +149,12 @@ export function OnboardingWizard({
               <p className="eyebrow">Arbeitsbereich</p>
               <h2 id="shop-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Welchen Shop beobachtest du?</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">Damit ordnen wir alle Produkte, Mitbewerber und Preisalarme eindeutig deinem Unternehmen zu.</p>
-              <form onSubmit={submitShop} className="mt-9 space-y-5">
-                <label>
+              <form onSubmit={submitShop} className="mt-9 space-y-7">
+                <label className="block">
                   <span className="field-label">Shopname</span>
                   <input className="field" name="shop_name" required autoFocus defaultValue={initialShop?.shop_name} placeholder="Mein Onlineshop" />
                 </label>
-                <label>
+                <label className="block">
                   <span className="field-label">Shop-URL</span>
                   <input className="field" name="shop_url" type="url" required defaultValue={initialShop?.shop_url} placeholder="https://mein-shop.de" />
                 </label>
@@ -172,16 +172,16 @@ export function OnboardingWizard({
               <h2 id="product-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Lege dein erstes Produkt an.</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">Der eigene Preis ist die Referenz für Abweichungen und spätere Alarme.</p>
               <form onSubmit={submitProduct} className="mt-9 space-y-5">
-                <label>
+                <label className="block">
                   <span className="field-label">Produktname</span>
                   <input className="field" name="name" required autoFocus placeholder="z. B. Mars Hydro SP3000" />
                 </label>
                 <div className="grid gap-5 sm:grid-cols-2">
-                  <label>
+                  <label className="block">
                     <span className="field-label">Artikelnummer (optional)</span>
                     <input className="field" name="our_sku" placeholder="SKU-1001" />
                   </label>
-                  <label>
+                  <label className="block">
                     <span className="field-label">Dein Preis in EUR</span>
                     <input className="field" name="our_price" inputMode="decimal" placeholder="199,00" />
                   </label>
@@ -204,7 +204,7 @@ export function OnboardingWizard({
               <h2 id="source-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Verbinde einen Mitbewerber.</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">PriceVault ruft die Produktseite regelmäßig ab und stellt den gefundenen Preis deiner Referenz gegenüber.</p>
               <form onSubmit={submitSource} className="mt-9 space-y-5">
-                <label>
+                <label className="block">
                   <span className="field-label">Dein Produkt</span>
                   <select className="field" name="product_id" required defaultValue={products.at(-1)?.id ?? ''}>
                     <option value="" disabled>Produkt wählen</option>
@@ -220,7 +220,7 @@ export function OnboardingWizard({
                 )}
 
                 {competitorMode === 'existing' ? (
-                  <label>
+                  <label className="block">
                     <span className="field-label">Mitbewerber</span>
                     <select className="field" name="competitor_id" required defaultValue={initialCompetitors[0]?.id}>
                       {initialCompetitors.map((competitor) => <option key={competitor.id} value={competitor.id}>{competitor.shop_name}</option>)}
@@ -228,22 +228,22 @@ export function OnboardingWizard({
                   </label>
                 ) : (
                   <div className="grid gap-5 sm:grid-cols-2">
-                    <label>
+                    <label className="block">
                       <span className="field-label">Name des Mitbewerbers</span>
                       <input className="field" name="shop_name" required placeholder="Beispiel Shop" />
                     </label>
-                    <label>
+                    <label className="block">
                       <span className="field-label">Basis-URL</span>
                       <input className="field" name="base_url" type="url" required placeholder="https://beispiel-shop.de" />
                     </label>
                   </div>
                 )}
 
-                <label>
+                <label className="block">
                   <span className="field-label">Produkt-URL beim Mitbewerber</span>
                   <input className="field" name="competitor_url" type="url" required placeholder="https://beispiel-shop.de/produkt" />
                 </label>
-                <label>
+                <label className="block">
                   <span className="field-label">Preis-Selektor (optional)</span>
                   <input className="field font-mono" name="selector_price" placeholder=".product-price" />
                   <span className="mt-2 block text-xs leading-5 text-vault-500">Ohne Selektor versucht der Scraper, den Preis automatisch zu erkennen.</span>
