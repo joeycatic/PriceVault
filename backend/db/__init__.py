@@ -1,0 +1,2 @@
+"""Supabase data access layer."""
+

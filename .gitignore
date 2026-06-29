@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+backend/venv/
+backend/.venv/
+backend/.env
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/.env.local
+*.log
+.DS_Store
+.idea/
+.vscode/
+
