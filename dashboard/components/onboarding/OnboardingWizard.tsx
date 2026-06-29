@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 
 import type { OnboardingResult } from '@/app/onboarding/actions'
+import { formatPriceInput, parsePriceInput } from '@/lib/priceInput'
 
 type ProductOption = { id: string; name: string }
 type CompetitorOption = { id: string; shop_name: string }
@@ -105,10 +106,11 @@ export function OnboardingWizard({
   const shopUrlValid = isHttpUrl(shopFields.shop_url)
   const shopReady = shopNameValid && shopUrlValid
   const productNameValid = productFields.name.trim().length >= 2
-  const normalizedPrice = productFields.our_price.trim().replace(',', '.')
-  const productPriceValid = !normalizedPrice || (Number.isFinite(Number(normalizedPrice)) && Number(normalizedPrice) >= 0)
+  const parsedProductPrice = productFields.our_price.trim() ? parsePriceInput(productFields.our_price) : null
+  const productPriceValid = !productFields.our_price.trim() || (parsedProductPrice !== null && parsedProductPrice >= 0)
   const productReady = productNameValid && productPriceValid
   const sourceProductValid = Boolean(sourceFields.product_id)
+  const selectedProduct = products.find((product) => product.id === sourceFields.product_id) ?? products.at(-1)
   const sourceCompetitorValid = competitorMode === 'existing'
     ? Boolean(sourceFields.competitor_id)
     : sourceFields.shop_name.trim().length >= 2 && isHttpUrl(sourceFields.base_url)
@@ -305,7 +307,18 @@ export function OnboardingWizard({
                   </label>
                   <label className="block">
                     <span className="field-label">Dein Preis in EUR</span>
-                    <input className={fieldState(productFields.our_price, productPriceValid)} name="our_price" inputMode="decimal" value={productFields.our_price} aria-invalid={Boolean(productFields.our_price) && !productPriceValid} placeholder="199,00" onChange={() => undefined} />
+                    <input
+                      className={fieldState(productFields.our_price, productPriceValid)}
+                      name="our_price"
+                      inputMode="decimal"
+                      value={productFields.our_price}
+                      aria-invalid={Boolean(productFields.our_price) && !productPriceValid}
+                      placeholder="199,00"
+                      onBlur={() => {
+                        setProductFields((current) => ({ ...current, our_price: formatPriceInput(current.our_price) }))
+                      }}
+                      onChange={() => undefined}
+                    />
                   </label>
                 </div>
                 <LiveVerification items={[
@@ -338,13 +351,18 @@ export function OnboardingWizard({
                 }}
                 className="mt-9 space-y-5"
               >
-                <label className="block">
-                  <span className="field-label">Dein Produkt</span>
-                  <select className={fieldState(sourceFields.product_id, sourceProductValid)} name="product_id" required value={sourceFields.product_id} onChange={() => undefined}>
-                    <option value="" disabled>Produkt wählen</option>
-                    {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-                  </select>
-                </label>
+                <input type="hidden" name="product_id" value={sourceFields.product_id} />
+                <div className="panel px-4 py-3">
+                  <span className="field-label">Produkt aus Schritt 02</span>
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="min-w-0 truncate text-sm font-semibold text-vault-100">
+                      {selectedProduct?.name ?? 'Erstes Produkt'}
+                    </p>
+                    <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-vault-lime">
+                      übernommen
+                    </span>
+                  </div>
+                </div>
 
                 {initialCompetitors.length > 0 && (
                   <div className="grid grid-cols-2 gap-2" aria-label="Mitbewerber auswählen">
@@ -383,7 +401,7 @@ export function OnboardingWizard({
                   <span className="mt-2 block text-xs leading-5 text-vault-500">Ohne Selektor versucht der Scraper, den Preis automatisch zu erkennen.</span>
                 </label>
                 <LiveVerification items={[
-                  { label: 'Produkt ausgewählt', state: sourceProductValid ? 'valid' : 'waiting' },
+                  { label: 'Produkt übernommen', state: sourceProductValid ? 'valid' : 'waiting' },
                   { label: 'Mitbewerber vollständig', state: sourceCompetitorValid ? 'valid' : 'waiting' },
                   { label: 'Produkt-URL gültig', state: !sourceFields.competitor_url ? 'waiting' : sourceUrlValid ? 'valid' : 'invalid' },
                 ]} />

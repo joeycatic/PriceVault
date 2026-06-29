@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
+import { parsePriceInput } from '@/lib/priceInput'
 import { createClient } from '@/lib/supabase/server'
 
 export type OnboardingResult = {
@@ -63,9 +64,9 @@ export async function saveShop(formData: FormData): Promise<OnboardingResult> {
 export async function saveFirstProduct(formData: FormData): Promise<OnboardingResult> {
   const name = text(formData, 'name')
   const sku = text(formData, 'our_sku')
-  const rawPrice = text(formData, 'our_price').replace(',', '.')
-  const price = rawPrice ? Number(rawPrice) : null
-  if (!name || (price !== null && (!Number.isFinite(price) || price < 0))) {
+  const rawPrice = text(formData, 'our_price')
+  const price = rawPrice ? parsePriceInput(rawPrice) : null
+  if (!name || (rawPrice && price === null) || (price !== null && price < 0)) {
     return { ok: false, message: 'Bitte prüfe Produktname und Preis.' }
   }
 
