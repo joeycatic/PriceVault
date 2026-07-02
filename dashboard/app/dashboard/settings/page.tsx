@@ -5,14 +5,14 @@ import { currentTenant } from '@/lib/backend'
 export default async function SettingsPage() {
   const tenant = await currentTenant()
   const sections = [
-    ['General', 'Zeitzone, Sprache, Waehrung und Standard-Scrape-Frequenz', '/dashboard/settings'],
-    ['Company', 'Shop, Rechnungsdaten, USt-ID und Unternehmensprofil', '/dashboard/company'],
+    ['General', 'Zeitzone, Sprache, Waehrung und Standard-Scrape-Frequenz', '/dashboard/settings/general'],
+    ['Company', 'Shop, Rechnungsdaten, USt-ID und Unternehmensprofil', '/dashboard/settings/company'],
     ['Billing', 'Plan, Viva-Abrechnung, Rechnungsmail und Status', '/dashboard/settings/billing'],
-    ['Notifications', 'E-Mail, Slack, Webhooks und Alert-Vorgaben', '/dashboard/alerts/channels'],
-    ['Security/API', 'API-Keys, Zugriff und Integrationsoberflaeche', '/dashboard/settings/api-keys'],
-    ['Integrations', 'Shopify, WooCommerce, CSV und Google Merchant Feeds', '/dashboard/settings/connectors'],
+    ['Notifications', 'E-Mail, Slack, Webhooks und Alert-Vorgaben', '/dashboard/settings/notifications'],
+    ['Security/API', 'API-Keys, Zugriff und Integrationsoberflaeche', '/dashboard/settings/security'],
+    ['Integrations', 'Shopify, WooCommerce, CSV und Google Merchant Feeds', '/dashboard/settings/integrations'],
     ['Team', 'Rollen, Einladungen, Owner und Sitzlimits', '/dashboard/settings/team'],
-    ['Data & Privacy', 'Export, Loeschanfrage und DSGVO-Kontakt', '/datenschutz'],
+    ['Data & Privacy', 'Export, Loeschanfrage und DSGVO-Kontakt', '/dashboard/settings/data-privacy'],
   ]
 
   return (
