@@ -17,3 +17,8 @@ dashboard/.env.local
 .DS_Store
 .idea/
 .vscode/
+
+# Local-only Codex/agent briefing files. Keep out of the public repo.
+/AGENTS.md
+/DESIGN_SKILL.md
+/CODEX_MASTERPROMPT.md
