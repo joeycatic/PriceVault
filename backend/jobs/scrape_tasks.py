@@ -1,6 +1,7 @@
 """ARQ scrape jobs."""
 
 from dataclasses import asdict
+from contextlib import suppress
 
 from agents.alert_agent import AlertAgent
 from agents.scraper_agent import ScrapeTarget, ScraperAgent
@@ -34,6 +35,9 @@ async def scrape_target(
     quota_reserved: bool = False,
 ) -> dict[str, object]:
     with supabase_context(admin=True):
+        scrape_job = None
+        with suppress(Exception):
+            scrape_job = await queries.start_scrape_job(tenant_id, competitor_product_id)
         rows = await queries.get_scrape_targets(tenant_id, [competitor_product_id])
         if not rows:
             error = "Aktive Preisquelle nicht gefunden"
@@ -43,6 +47,12 @@ async def scrape_target(
                 competitor_product_id=competitor_product_id,
                 error=error,
             )
+            if scrape_job:
+                with suppress(Exception):
+                    await queries.finish_scrape_job(
+                        scrape_job["id"],
+                        {"state": "failed", "failure_reason": error},
+                    )
             return {"scrape_ok": False, "error": error}
 
         attempt = int(ctx.get("job_try") or 1)
@@ -57,6 +67,15 @@ async def scrape_target(
                     requested=1,
                 )
                 if not reserved:
+                    if scrape_job:
+                        with suppress(Exception):
+                            await queries.finish_scrape_job(
+                                scrape_job["id"],
+                                {
+                                    "state": "failed",
+                                    "failure_reason": "Tageslimit für Preisabrufe erreicht",
+                                },
+                            )
                     return {
                         "scrape_ok": False,
                         "error": "Tageslimit für Preisabrufe erreicht",
@@ -64,6 +83,16 @@ async def scrape_target(
 
         result = await ScraperAgent().scrape(_target_from_row(rows[0]))
         if not result.scrape_ok:
+            if scrape_job:
+                with suppress(Exception):
+                    await queries.finish_scrape_job(
+                        scrape_job["id"],
+                        {
+                            "state": "retrying" if attempt < 3 else "failed",
+                            "failure_reason": result.error_msg,
+                            "retry_count": max(0, attempt - 1),
+                        },
+                    )
             await maybe_retry_or_dlq(
                 ctx,
                 tenant_id=tenant_id,
@@ -71,7 +100,25 @@ async def scrape_target(
                 error=result.error_msg or "Preisabruf fehlgeschlagen",
             )
         elif evaluate_alerts:
+            if scrape_job:
+                with suppress(Exception):
+                    await queries.finish_scrape_job(
+                        scrape_job["id"],
+                        {
+                            "state": "succeeded",
+                            "last_successful_price": result.price,
+                        },
+                    )
             await AlertAgent().run(tenant_id)
+        elif scrape_job:
+            with suppress(Exception):
+                await queries.finish_scrape_job(
+                    scrape_job["id"],
+                    {
+                        "state": "succeeded",
+                        "last_successful_price": result.price,
+                    },
+                )
         return asdict(result)
 
 
@@ -99,7 +146,7 @@ async def scrape_all(ctx: dict) -> dict[str, int]:
         tenants = await queries.list_tenants()
         queued = 0
         for tenant in tenants:
-            rows = await queries.get_scrape_targets(tenant["id"])
+            rows = await queries.get_due_scrape_targets(tenant["id"])
             reserved = await reserve_scrape_slots(
                 ctx["redis"],
                 tenant_id=tenant["id"],

@@ -12,7 +12,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from jobs.worker_status import worker_autoscaling_signals
 from middleware.rate_limit import TenantPlanRateLimitMiddleware, limiter
-from routers import alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, products, scrape, snapshots, team, webhooks
+from routers import admin, alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, products, reports, scrape, settings, snapshots, team, webhooks
 from routers.connectors import shopify, sources
 from utils.logger import configure_logging, get_logger
 
@@ -51,6 +51,9 @@ app.include_router(team.router)
 app.include_router(sources.router)
 app.include_router(shopify.router)
 app.include_router(integrations.router)
+app.include_router(settings.router)
+app.include_router(reports.router)
+app.include_router(admin.router)
 
 
 @app.get("/health", tags=["system"])

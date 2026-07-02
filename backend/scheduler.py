@@ -17,7 +17,7 @@ async def enqueue_all_scrapes(redis_url: str | None = None) -> int:
         with supabase_context(admin=True):
             tenants = await queries.list_tenants()
             for tenant in tenants:
-                rows = await queries.get_scrape_targets(tenant["id"])
+                rows = await queries.get_due_scrape_targets(tenant["id"])
                 for row in rows:
                     job = await redis.enqueue_job(
                         "scrape_target",

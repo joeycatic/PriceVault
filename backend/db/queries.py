@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from db.client import get_supabase
@@ -153,7 +153,7 @@ async def get_product(tenant_id: str, product_id: str) -> dict[str, Any] | None:
     rows = await _execute(
         lambda: get_supabase()
         .table("products")
-        .select("id,active")
+        .select("*")
         .eq("tenant_id", tenant_id)
         .eq("id", product_id)
         .limit(1)
@@ -239,7 +239,7 @@ async def get_scrape_targets(
             .table("competitor_products")
             .select(
                 "id,tenant_id,competitor_url,selector_price,competitor_id,"
-                "competitors!inner(selector_price,selector_stock,active)"
+                "competitors!inner(selector_price,selector_stock,active,scrape_freq_h,last_scraped_at)"
             )
             .eq("active", True)
             .eq("competitors.active", True)
@@ -262,9 +262,31 @@ async def get_scrape_targets(
                 "selector_price": row.get("selector_price") or competitor.get("selector_price"),
                 "selector_stock": competitor.get("selector_stock"),
                 "competitor_id": row["competitor_id"],
+                "scrape_freq_h": competitor.get("scrape_freq_h"),
+                "last_scraped_at": competitor.get("last_scraped_at"),
             }
         )
     return targets
+
+
+async def get_due_scrape_targets(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    rows = await get_scrape_targets(tenant_id)
+    due: list[dict[str, Any]] = []
+    for row in rows:
+        last_scraped_at = row.get("last_scraped_at")
+        if not last_scraped_at:
+            due.append(row)
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(last_scraped_at).replace("Z", "+00:00"))
+        except ValueError:
+            due.append(row)
+            continue
+        frequency = int(row.get("scrape_freq_h") or 12)
+        if parsed + timedelta(hours=frequency) <= now:
+            due.append(row)
+    return due
 
 
 async def insert_snapshot(values: dict[str, Any]) -> dict[str, Any]:
@@ -581,6 +603,29 @@ async def delete_team_member(tenant_id: str, user_id: str) -> bool:
     return bool(rows)
 
 
+async def update_team_member(tenant_id: str, user_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("team_members")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("user_id", user_id)
+    )
+    return rows[0] if rows else None
+
+
+async def count_owner_members(tenant_id: str) -> int:
+    response = await asyncio.to_thread(
+        lambda: get_supabase()
+        .table("team_members")
+        .select("id", count="exact", head=True)
+        .eq("tenant_id", tenant_id)
+        .eq("role", "owner")
+        .execute()
+    )
+    return int(response.count or 0)
+
+
 async def create_connector_source(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(
         lambda: get_supabase()
@@ -604,7 +649,202 @@ async def list_connector_sources(tenant_id: str) -> list[dict[str, Any]]:
         safe_config = {
             key: value
             for key, value in config.items()
-            if key not in {"access_token", "access_token_ciphertext"}
+            if key
+            not in {
+                "access_token",
+                "access_token_ciphertext",
+                "consumer_secret",
+                "consumer_secret_ciphertext",
+                "api_secret",
+            }
         }
         safe_rows.append({**row, "config": safe_config})
     return safe_rows
+
+
+async def get_connector_source(tenant_id: str, connector_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sources")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", connector_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_connector_source(
+    tenant_id: str, connector_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sources")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", connector_id)
+    )
+    return rows[0] if rows else None
+
+
+async def insert_audit_event(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("audit_events").insert(values))
+    return rows[0]
+
+
+async def list_audit_events(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("audit_events").select("*")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        return query.order("created_at", desc=True).limit(limit)
+
+    return await _execute(build)
+
+
+async def create_scrape_job(tenant_id: str, competitor_product_id: str, state: str = "queued") -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("scrape_jobs")
+        .insert(
+            {
+                "tenant_id": tenant_id,
+                "competitor_product_id": competitor_product_id,
+                "state": state,
+                **({"started_at": datetime.now(timezone.utc).isoformat()} if state == "running" else {}),
+            }
+        )
+    )
+    return rows[0]
+
+
+async def start_scrape_job(tenant_id: str, competitor_product_id: str) -> dict[str, Any]:
+    queued = await _execute(
+        lambda: get_supabase()
+        .table("scrape_jobs")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("competitor_product_id", competitor_product_id)
+        .eq("state", "queued")
+        .order("queued_at", desc=True)
+        .limit(1)
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    if queued:
+        rows = await _execute(
+            lambda: get_supabase()
+            .table("scrape_jobs")
+            .update({"state": "running", "started_at": now})
+            .eq("id", queued[0]["id"])
+        )
+        return rows[0]
+    return await create_scrape_job(tenant_id, competitor_product_id, "running")
+
+
+async def finish_scrape_job(job_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("scrape_jobs")
+        .update({**values, "finished_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", job_id)
+    )
+    return rows[0] if rows else None
+
+
+async def list_scrape_jobs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("scrape_jobs").select("*, competitor_products(competitor_url)")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        return query.order("queued_at", desc=True).limit(limit)
+
+    return await _execute(build)
+
+
+async def list_report_schedules(tenant_id: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("report_schedules")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .order("created_at", desc=True)
+    )
+
+
+async def get_report_schedule(tenant_id: str, schedule_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("report_schedules")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", schedule_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_report_schedule(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("report_schedules").insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def update_report_schedule(
+    tenant_id: str, schedule_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("report_schedules")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", schedule_id)
+    )
+    return rows[0] if rows else None
+
+
+async def delete_report_schedule(tenant_id: str, schedule_id: str) -> bool:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("report_schedules")
+        .delete()
+        .eq("tenant_id", tenant_id)
+        .eq("id", schedule_id)
+    )
+    return bool(rows)
+
+
+async def create_report_run(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("report_runs").insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def list_report_runs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("report_runs").select("*, report_schedules(name)")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        return query.order("created_at", desc=True).limit(limit)
+
+    return await _execute(build)
+
+
+async def create_connector_sync_run(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sync_runs")
+        .insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def list_connector_sync_runs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("connector_sync_runs").select("*, connector_sources(name,type)")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        return query.order("created_at", desc=True).limit(limit)
+
+    return await _execute(build)

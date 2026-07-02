@@ -119,9 +119,61 @@ class AlertChannelUpdate(APIModel):
     config: dict[str, Any] | None = None
 
 
+TeamRole = Literal["owner", "admin", "analyst", "viewer", "billing", "member"]
+
+
 class TeamInviteRequest(APIModel):
     email: EmailStr
-    role: Literal["admin", "member"] = "member"
+    role: TeamRole = "member"
+
+
+class TeamMemberUpdate(APIModel):
+    role: TeamRole
+
+
+class TenantSettingsUpdate(APIModel):
+    shop_name: str | None = Field(default=None, min_length=1)
+    shop_url: HttpUrl | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
+    locale: str | None = Field(default=None, min_length=2, max_length=12)
+    default_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    default_scrape_freq_h: int | None = Field(default=None, ge=1, le=168)
+    invoice_email: EmailStr | None = None
+    vat_id: str | None = Field(default=None, max_length=40)
+    notification_defaults: dict[str, Any] | None = None
+    activation_state: dict[str, Any] | None = None
+
+
+class ReportScheduleCreate(APIModel):
+    name: str = Field(min_length=1, max_length=120)
+    cadence: Literal["weekly", "monthly"]
+    recipients: list[EmailStr] = Field(min_length=1, max_length=10)
+    include_csv: bool = False
+    filters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportScheduleUpdate(APIModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    cadence: Literal["weekly", "monthly"] | None = None
+    recipients: list[EmailStr] | None = Field(default=None, min_length=1, max_length=10)
+    include_csv: bool | None = None
+    filters: dict[str, Any] | None = None
+    active: bool | None = None
+
+
+class ConnectorSourceCreate(APIModel):
+    type: Literal["woocommerce", "feed_csv", "google_merchant"]
+    name: str = Field(min_length=1, max_length=120)
+    config: dict[str, Any]
+
+
+class ConnectorSyncRequest(APIModel):
+    connector_id: str
+
+
+class AdminPlanOverride(APIModel):
+    plan: Literal["free", "pro", "agency"]
+    reason: str = Field(min_length=4, max_length=500)
 
 
 class ShopifyImportRequest(APIModel):

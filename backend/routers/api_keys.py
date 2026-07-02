@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from auth.plan_guard import require_plan_admin
 from db import queries
 from models.schemas import APIKeyCreate
+from routers.audit import record_audit_event
 
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
@@ -25,6 +26,13 @@ async def create(body: APIKeyCreate, tenant: dict = Depends(require_plan_admin("
     key_prefix = raw[:12]
     key_hash = bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
     key = await queries.create_api_key(str(uuid4()), tenant["id"], body.name, key_prefix, key_hash)
+    await record_audit_event(
+        tenant,
+        action="api_key.created",
+        resource_type="api_key",
+        resource_id=key["id"],
+        metadata={"name": body.name, "key_prefix": key_prefix},
+    )
     return {"id": key["id"], "key": f"pv_{raw}"}
 
 
@@ -34,4 +42,10 @@ async def revoke(
 ) -> dict[str, bool]:
     if not await queries.revoke_api_key(tenant["id"], key_id):
         raise HTTPException(status_code=404, detail="API-Key nicht gefunden")
+    await record_audit_event(
+        tenant,
+        action="api_key.revoked",
+        resource_type="api_key",
+        resource_id=key_id,
+    )
     return {"revoked": True}

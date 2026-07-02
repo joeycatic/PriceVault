@@ -2,11 +2,12 @@
 
 import asyncio
 import os
+from contextlib import suppress
 from dataclasses import asdict
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from agents.matcher_agent import MatchRequest, MatcherAgent
 from agents.scraper_agent import ScrapeTarget, ScraperAgent
@@ -62,6 +63,12 @@ async def run_scrape(
             )
         jobs = []
         for row in rows:
+            with suppress(Exception):
+                await queries.create_scrape_job(
+                    tenant_id,
+                    row["competitor_product_id"],
+                    "queued",
+                )
             job = await redis.enqueue_job(
                 "scrape_target",
                 competitor_product_id=row["competitor_product_id"],
@@ -77,6 +84,14 @@ async def run_scrape(
         )
         await redis.aclose()
     return {"queued": len([job for job in jobs if job]), "triggered": len(rows)}
+
+
+@router.get("/scrape/jobs")
+async def list_jobs(
+    limit: int = Query(default=100, ge=1, le=500),
+    tenant: dict = Depends(get_current_tenant),
+) -> list[dict]:
+    return await queries.list_scrape_jobs(tenant["id"], limit)
 
 
 @router.post("/scrape/test")

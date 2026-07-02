@@ -25,4 +25,5 @@ async def get_current_tenant(
         **tenant,
         "_role": role,
         "_email": getattr(request.state, "user_email", None),
+        "_actor_user_id": user_id,
     }
