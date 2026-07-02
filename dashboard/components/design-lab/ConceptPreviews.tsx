@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { AdditionalConceptPreview, type AdditionalConceptName } from '@/components/design-lab/AdditionalConceptPreviews'
+import { CompanyInspiredConceptPreview, type CompanyConceptName } from '@/components/design-lab/CompanyInspiredConceptPreviews'
 import { SpecializedConceptPreview, type SpecializedConceptName } from '@/components/design-lab/SpecializedConceptPreviews'
 
 const products = [
@@ -214,7 +215,7 @@ function LedgerConcept() {
   )
 }
 
-export type ConceptName = 'hygraph' | 'vercel' | 'control-room' | 'ledger' | AdditionalConceptName | SpecializedConceptName
+export type ConceptName = 'hygraph' | 'vercel' | 'control-room' | 'ledger' | AdditionalConceptName | SpecializedConceptName | CompanyConceptName
 
 export function ConceptPreview({ concept }: { concept: ConceptName }) {
   switch (concept) {
@@ -233,7 +234,14 @@ export function ConceptPreview({ concept }: { concept: ConceptName }) {
     case 'soft-console':
     case 'brutalist-ops':
       return <AdditionalConceptPreview concept={concept} />
-    default:
+    case 'radar':
+    case 'terminal':
+    case 'diff-view':
+    case 'trading-desk':
+    case 'field-notebook':
+    case 'clean-workspace':
       return <SpecializedConceptPreview concept={concept} />
+    default:
+      return <CompanyInspiredConceptPreview concept={concept} />
   }
 }

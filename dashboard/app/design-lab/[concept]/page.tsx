@@ -19,6 +19,13 @@ const concepts: ConceptName[] = [
   'trading-desk',
   'field-notebook',
   'clean-workspace',
+  'linear-workspace',
+  'stripe-analytics',
+  'merchant-admin',
+  'notion-database',
+  'retool-ops',
+  'attio-data',
+  'vercel-commerce',
 ]
 
 export function generateStaticParams() {

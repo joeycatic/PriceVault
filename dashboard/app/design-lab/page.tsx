@@ -129,6 +129,62 @@ const concepts = [
     description: 'Leise Typografie, viel Weißraum und nur die nötigsten Statusfarben und Aktionen.',
     palette: ['#ffffff', '#17211d', '#edf2ef', '#176b4d'],
   },
+  {
+    href: '/design-lab/linear-workspace',
+    number: '17',
+    name: 'Focus List',
+    reference: 'Linear-inspiriert',
+    description: 'Priorisierte Arbeitslisten, zurückhaltende Dark-UI und schnelle Tastatur-orientierte Aktionen.',
+    palette: ['#111113', '#171719', '#5e6ad2', '#45b882'],
+  },
+  {
+    href: '/design-lab/stripe-analytics',
+    number: '18',
+    name: 'Analytics Console',
+    reference: 'Stripe-inspiriert',
+    description: 'Helle Finanz-Dashboard-Struktur mit ruhigen Kennzahlen, Diagrammen und Aktivitätsfeed.',
+    palette: ['#f6f8fa', '#ffffff', '#635bff', '#30313d'],
+  },
+  {
+    href: '/design-lab/merchant-admin',
+    number: '19',
+    name: 'Merchant Admin',
+    reference: 'Shopify-inspiriert',
+    description: 'Pragmatische Händleroberfläche mit klaren Listen, Statusfiltern und vertrauten Aktionen.',
+    palette: ['#f1f1f1', '#ffffff', '#303030', '#dff3e8'],
+  },
+  {
+    href: '/design-lab/notion-database',
+    number: '20',
+    name: 'Workspace Database',
+    reference: 'Notion-inspiriert',
+    description: 'Produkte als flexible Datenbankeinträge mit Ansichten, Eigenschaften und reduzierter Navigation.',
+    palette: ['#ffffff', '#f7f7f5', '#37352f', '#2383e2'],
+  },
+  {
+    href: '/design-lab/retool-ops',
+    number: '21',
+    name: 'Ops Builder',
+    reference: 'Retool-inspiriert',
+    description: 'Dichte interne Arbeitsoberfläche mit Filtern, Ressourcenstatus und Detailinspektor.',
+    palette: ['#f4f5f7', '#ffffff', '#3b62f6', '#262b33'],
+  },
+  {
+    href: '/design-lab/attio-data',
+    number: '22',
+    name: 'Data Workspace',
+    reference: 'Attio-inspiriert',
+    description: 'Moderne objektbasierte Datenansicht mit Listen, Attributen und flexiblen Statusfeldern.',
+    palette: ['#ffffff', '#f7f7f8', '#202124', '#ff5a36'],
+  },
+  {
+    href: '/design-lab/vercel-commerce',
+    number: '23',
+    name: 'Precision Commerce',
+    reference: 'Vercel × Shopify',
+    description: 'Vercels monochrome Präzision kombiniert mit Shopifys produktorientiertem Händler-Workflow.',
+    palette: ['#ffffff', '#000000', '#f3faf5', '#1aab40'],
+  },
 ]
 
 export default function DesignLabPage() {
@@ -136,7 +192,7 @@ export default function DesignLabPage() {
     <main className="mx-auto max-w-[1440px] px-5 py-12 sm:px-8 lg:px-12 lg:py-20">
       <header className="grid gap-8 border-b border-black pb-10 lg:grid-cols-[1fr_24rem] lg:items-end">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Sechzehn Richtungen / Ein Produkt</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Dreiundzwanzig Richtungen / Ein Produkt</p>
           <h1 className="mt-4 max-w-4xl text-4xl font-semibold leading-[1.02] sm:text-6xl lg:text-7xl">
             Wie soll sich PriceVault bei der täglichen Arbeit anfühlen?
           </h1>
