@@ -13,12 +13,16 @@ const links = [
   { href: '/dashboard/products', label: 'Produkte', mark: '04' },
   { href: '/dashboard/alerts', label: 'Preisalarme', mark: '05' },
   { href: '/dashboard/alerts/channels', label: 'Kanäle', mark: '06' },
-  { href: '/dashboard/usage', label: 'Nutzung', mark: '07' },
-  { href: '/dashboard/settings/billing', label: 'Abrechnung', mark: '08' },
-  { href: '/dashboard/settings/api-keys', label: 'API-Keys', mark: '09' },
-  { href: '/dashboard/settings/team', label: 'Team', mark: '10' },
-  { href: '/dashboard/settings/connectors', label: 'Connectoren', mark: '11' },
-  { href: '/dashboard/wiki', label: 'Wiki', mark: '12' },
+  { href: '/dashboard/reports', label: 'Reports', mark: '07' },
+  { href: '/dashboard/scrapes', label: 'Scrape-Jobs', mark: '08' },
+  { href: '/dashboard/usage', label: 'Nutzung', mark: '09' },
+  { href: '/dashboard/settings', label: 'Settings', mark: '10' },
+  { href: '/dashboard/settings/billing', label: 'Abrechnung', mark: '11' },
+  { href: '/dashboard/settings/api-keys', label: 'API-Keys', mark: '12' },
+  { href: '/dashboard/settings/team', label: 'Team', mark: '13' },
+  { href: '/dashboard/settings/connectors', label: 'Connectoren', mark: '14' },
+  { href: '/dashboard/admin', label: 'Support', mark: '15' },
+  { href: '/dashboard/wiki', label: 'Wiki', mark: '16' },
 ]
 
 export function Sidebar({ shopName }: { shopName: string }) {

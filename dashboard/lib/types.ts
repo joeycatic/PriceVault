@@ -9,7 +9,15 @@ export type Tenant = {
   subscription_status?: 'inactive' | 'active' | 'past_due' | 'canceled'
   subscription_plan?: 'pro' | 'agency' | null
   subscription_current_period_end?: string | null
-  membership_role?: 'owner' | 'admin' | 'member'
+  membership_role?: 'owner' | 'admin' | 'analyst' | 'viewer' | 'billing' | 'member'
+  timezone?: string
+  locale?: string
+  default_currency?: string
+  default_scrape_freq_h?: number
+  invoice_email?: string | null
+  vat_id?: string | null
+  notification_defaults?: Record<string, unknown>
+  activation_state?: Record<string, unknown>
   created_at: string
 }
 
