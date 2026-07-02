@@ -2,7 +2,18 @@ import { notFound } from 'next/navigation'
 
 import { ConceptPreview, type ConceptName } from '@/components/design-lab/ConceptPreviews'
 
-const concepts: ConceptName[] = ['hygraph', 'vercel', 'control-room', 'ledger']
+const concepts: ConceptName[] = [
+  'hygraph',
+  'vercel',
+  'control-room',
+  'ledger',
+  'swiss-grid',
+  'focus-console',
+  'blueprint',
+  'commerce-desk',
+  'soft-console',
+  'brutalist-ops',
+]
 
 export function generateStaticParams() {
   return concepts.map((concept) => ({ concept }))

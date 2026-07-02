@@ -1,5 +1,7 @@
 import Link from 'next/link'
 
+import { AdditionalConceptPreview, type AdditionalConceptName } from '@/components/design-lab/AdditionalConceptPreviews'
+
 const products = [
   { name: 'Nike Air Max 90', sku: 'NK-AM90-001', own: '149,90 €', market: '132,00 €', delta: '-11,9 %', source: 'SneakerWorld', state: 'Kritisch' },
   { name: 'Adidas Samba OG', sku: 'AD-SAM-042', own: '119,00 €', market: '115,50 €', delta: '-2,9 %', source: 'Urban Kicks', state: 'Beobachten' },
@@ -211,7 +213,7 @@ function LedgerConcept() {
   )
 }
 
-export type ConceptName = 'hygraph' | 'vercel' | 'control-room' | 'ledger'
+export type ConceptName = 'hygraph' | 'vercel' | 'control-room' | 'ledger' | AdditionalConceptName
 
 export function ConceptPreview({ concept }: { concept: ConceptName }) {
   switch (concept) {
@@ -223,5 +225,7 @@ export function ConceptPreview({ concept }: { concept: ConceptName }) {
       return <ControlRoomConcept />
     case 'ledger':
       return <LedgerConcept />
+    default:
+      return <AdditionalConceptPreview concept={concept} />
   }
 }

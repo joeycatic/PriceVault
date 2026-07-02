@@ -5,12 +5,18 @@ const concepts = [
   { href: '/design-lab/vercel', label: '02 Vercel' },
   { href: '/design-lab/control-room', label: '03 Control Room' },
   { href: '/design-lab/ledger', label: '04 Market Ledger' },
+  { href: '/design-lab/swiss-grid', label: '05 Swiss Grid' },
+  { href: '/design-lab/focus-console', label: '06 Focus' },
+  { href: '/design-lab/blueprint', label: '07 Blueprint' },
+  { href: '/design-lab/commerce-desk', label: '08 Commerce' },
+  { href: '/design-lab/soft-console', label: '09 Soft Console' },
+  { href: '/design-lab/brutalist-ops', label: '10 Brutalist' },
 ]
 
 export default function DesignLabLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[#f4f4f2] text-[#171717]" style={{ colorScheme: 'light' }}>
-      <header className="sticky top-0 z-50 flex min-h-12 items-center justify-between gap-4 border-b border-black/15 bg-[#f4f4f2]/95 px-3 backdrop-blur sm:px-5">
+      <header className="sticky top-0 z-50 flex min-h-12 items-center justify-between gap-4 border-b border-black/15 bg-[#f4f4f2] px-3 sm:px-5">
         <Link href="/design-lab" className="shrink-0 text-xs font-bold uppercase tracking-[0.16em]">
           PriceVault / Designlabor
         </Link>

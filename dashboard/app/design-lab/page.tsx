@@ -33,6 +33,54 @@ const concepts = [
     description: 'Ein analytisches Marktjournal mit tabellarischer Präzision und warmer Papieroptik.',
     palette: ['#f3efe5', '#182b49', '#e14b32', '#f2bf3f'],
   },
+  {
+    href: '/design-lab/swiss-grid',
+    number: '05',
+    name: 'Swiss Grid',
+    reference: 'International Style',
+    description: 'Radikale Typografie, Primärfarben und ein streng gerastertes Informationssystem.',
+    palette: ['#f5f4ef', '#111111', '#e5362f', '#1268d8'],
+  },
+  {
+    href: '/design-lab/focus-console',
+    number: '06',
+    name: 'Focus Console',
+    reference: 'Calm Productivity',
+    description: 'Eine ruhige dunkle Arbeitsfläche mit kompakter Navigation und klaren Aktionssignalen.',
+    palette: ['#0f1014', '#292633', '#8b6cff', '#61d6a0'],
+  },
+  {
+    href: '/design-lab/blueprint',
+    number: '07',
+    name: 'Market Blueprint',
+    reference: 'Technical Schematic',
+    description: 'Preisbeziehungen als technischer Bauplan mit Koordinaten, Knoten und Prüfzuständen.',
+    palette: ['#0c4fa3', '#f1f7ff', '#ffcf42', '#79f0c0'],
+  },
+  {
+    href: '/design-lab/commerce-desk',
+    number: '08',
+    name: 'Commerce Desk',
+    reference: 'Retail Operations',
+    description: 'Eine pragmatische Arbeitswarteschlange für tägliche Entscheidungen im E-Commerce.',
+    palette: ['#f4f6f1', '#123d32', '#f3c64d', '#d85a3c'],
+  },
+  {
+    href: '/design-lab/soft-console',
+    number: '09',
+    name: 'Soft Console',
+    reference: 'Approachable SaaS',
+    description: 'Freundliche Statusflächen, sanfte Kontraste und verständliche Sprache für kleinere Teams.',
+    palette: ['#f7f3f4', '#29252b', '#ef6f61', '#e5f3ec'],
+  },
+  {
+    href: '/design-lab/brutalist-ops',
+    number: '10',
+    name: 'Brutalist Ops',
+    reference: 'Raw Utility',
+    description: 'Kompromisslose Kontraste, harte Raster und maximale Sichtbarkeit kritischer Daten.',
+    palette: ['#f0f0e8', '#000000', '#f2ff48', '#ff5c39'],
+  },
 ]
 
 export default function DesignLabPage() {
@@ -40,7 +88,7 @@ export default function DesignLabPage() {
     <main className="mx-auto max-w-[1440px] px-5 py-12 sm:px-8 lg:px-12 lg:py-20">
       <header className="grid gap-8 border-b border-black pb-10 lg:grid-cols-[1fr_24rem] lg:items-end">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Vier Richtungen / Ein Produkt</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Zehn Richtungen / Ein Produkt</p>
           <h1 className="mt-4 max-w-4xl text-4xl font-semibold leading-[1.02] sm:text-6xl lg:text-7xl">
             Wie soll sich PriceVault bei der täglichen Arbeit anfühlen?
           </h1>
