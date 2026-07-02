@@ -73,13 +73,13 @@ export default function WikiPage() {
               <div className="border border-vault-700 bg-vault-950/70 p-4">
                 <h3 className="font-semibold">Automatisch</h3>
                 <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Der FastAPI-Scheduler startet beim Backend-Start und ruft alle aktiven Preisquellen alle 12 Stunden ab. Zusätzlich läuft beim Start ein initialer Abruf.
+                  Der ARQ-Worker ruft aktive Preisquellen über Redis-Jobs ab. Der API-Prozess nimmt nur Anfragen entgegen und führt keine Browser-Jobs im Webprozess aus.
                 </p>
               </div>
               <div className="border border-vault-700 bg-vault-950/70 p-4">
                 <h3 className="font-semibold">Manuell</h3>
                 <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Über die Buttons „Jetzt abrufen“ wird der Backend-Endpunkt direkt ausgelöst. Global bedeutet alle aktiven Quellen; pro Tabellenzeile bedeutet nur diese eine Quelle.
+                  Über die Buttons „Jetzt abrufen“ werden Redis-Jobs eingeplant. Global bedeutet alle aktiven Quellen; pro Tabellenzeile bedeutet nur diese eine Quelle.
                 </p>
               </div>
               <div className="border border-vault-700 bg-vault-950/70 p-4">
@@ -122,7 +122,8 @@ export default function WikiPage() {
               </div>
               <p>
                 Erforderliche Header: <span className="font-mono text-vault-100">Content-Type: application/json</span> und{' '}
-                <span className="font-mono text-vault-100">X-Tenant-ID: &lt;tenant-id&gt;</span>. Backend und Body müssen denselben Mandanten verwenden.
+                <span className="font-mono text-vault-100">Authorization: Bearer &lt;supabase-access-token&gt;</span> sowie{' '}
+                <span className="font-mono text-vault-100">X-Tenant-ID: &lt;tenant-id&gt;</span>. Backend und Body müssen zur Supabase-Sitzung gehören.
               </p>
             </div>
           </section>

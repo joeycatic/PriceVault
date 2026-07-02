@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 
+import { backendFetch } from '@/lib/backend'
+import { planLimit } from '@/lib/plan-gates'
 import { parsePriceInput } from '@/lib/priceInput'
 import { createClient } from '@/lib/supabase/server'
 
@@ -34,8 +36,8 @@ async function authenticatedTenant() {
 
   const { data: tenant } = await supabase
     .from('tenants')
-    .select('id')
-    .eq('user_id', user.id)
+    .select('id, plan, user_id')
+    .limit(1)
     .maybeSingle()
 
   return { supabase, user, tenant }
@@ -51,14 +53,38 @@ export async function saveShop(formData: FormData): Promise<OnboardingResult> {
   const { supabase, user, tenant } = await authenticatedTenant()
   if (!user) return { ok: false, message: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' }
 
-  const query = tenant
-    ? supabase.from('tenants').update({ shop_name: shopName, shop_url: shopUrl }).eq('id', tenant.id)
-    : supabase.from('tenants').insert({ user_id: user.id, shop_name: shopName, shop_url: shopUrl })
-  const { error } = await query
-  if (error) return { ok: false, message: 'Der Shop konnte nicht gespeichert werden.' }
+  let tenantId = tenant?.id ?? null
+  if (tenant) {
+    if (tenant.user_id !== user.id) {
+      return { ok: false, message: 'Nur Owner dürfen den Shop bearbeiten.' }
+    }
+    const { error } = await supabase
+      .from('tenants')
+      .update({ shop_name: shopName, shop_url: shopUrl })
+      .eq('id', tenant.id)
+    if (error) return { ok: false, message: 'Der Shop konnte nicht gespeichert werden.' }
+  } else {
+    const { data, error } = await supabase
+      .from('tenants')
+      .insert({ user_id: user.id, shop_name: shopName, shop_url: shopUrl })
+      .select('id')
+      .single()
+    if (error || !data) return { ok: false, message: 'Der Shop konnte nicht gespeichert werden.' }
+    tenantId = data.id
+    if (user.email) {
+      try {
+        await backendFetch('/onboarding/sequence', tenantId, {
+          method: 'POST',
+          body: JSON.stringify({ email: user.email }),
+        })
+      } catch {
+        // Email scheduling must not block tenant setup.
+      }
+    }
+  }
 
   revalidatePath('/', 'layout')
-  return { ok: true, message: 'Shop gespeichert.', id: tenant?.id, name: shopName }
+  return { ok: true, message: 'Shop gespeichert.', id: tenantId ?? undefined, name: shopName }
 }
 
 export async function saveFirstProduct(formData: FormData): Promise<OnboardingResult> {
@@ -73,6 +99,19 @@ export async function saveFirstProduct(formData: FormData): Promise<OnboardingRe
   const { supabase, user, tenant } = await authenticatedTenant()
   if (!user) return { ok: false, message: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' }
   if (!tenant) return { ok: false, message: 'Speichere zuerst deinen Shop.' }
+
+  const limit = planLimit(tenant.plan).products
+  if (limit !== null) {
+    const { count, error: countError } = await supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenant.id)
+      .eq('active', true)
+    if (countError) return { ok: false, message: 'Das Produktlimit konnte nicht geprüft werden.' }
+    if ((count ?? 0) >= limit) {
+      return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Produkte.` }
+    }
+  }
 
   const { data, error } = await supabase
     .from('products')

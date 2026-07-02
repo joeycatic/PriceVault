@@ -1,18 +1,8 @@
 import { redirect } from 'next/navigation'
 
-import { createClient } from '@/lib/supabase/server'
+import { currentTenant } from '@/lib/backend'
 
 export default async function HomePage() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: tenant } = await supabase
-    .from('tenants')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  const tenant = await currentTenant()
   redirect(tenant ? '/dashboard' : '/onboarding')
 }

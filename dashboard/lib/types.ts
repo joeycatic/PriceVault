@@ -3,7 +3,13 @@ export type Tenant = {
   user_id: string
   shop_name: string
   shop_url: string
-  plan: 'trial' | 'starter' | 'pro'
+  plan: 'free' | 'trial' | 'starter' | 'pro' | 'agency'
+  billing_provider?: 'viva' | null
+  viva_initial_transaction_id?: string | null
+  subscription_status?: 'inactive' | 'active' | 'past_due' | 'canceled'
+  subscription_plan?: 'pro' | 'agency' | null
+  subscription_current_period_end?: string | null
+  membership_role?: 'owner' | 'admin' | 'member'
   created_at: string
 }
 
@@ -87,4 +93,3 @@ export type LatestPrice = {
   scrape_ok: boolean | null
   delta_pct: number | null
 }
-

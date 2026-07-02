@@ -1,22 +1,10 @@
 import { redirect } from 'next/navigation'
 
 import { Sidebar } from '@/components/ui/Sidebar'
-import { createClient } from '@/lib/supabase/server'
-import type { Tenant } from '@/lib/types'
+import { currentTenant } from '@/lib/backend'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data } = await supabase
-    .from('tenants')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle()
-  const tenant = data as Tenant | null
+  const tenant = await currentTenant()
   if (!tenant) redirect('/onboarding')
 
   return (

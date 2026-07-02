@@ -12,7 +12,13 @@ const links = [
   { href: '/dashboard/company', label: 'Unternehmen', mark: '03' },
   { href: '/dashboard/products', label: 'Produkte', mark: '04' },
   { href: '/dashboard/alerts', label: 'Preisalarme', mark: '05' },
-  { href: '/dashboard/wiki', label: 'Wiki', mark: '06' },
+  { href: '/dashboard/alerts/channels', label: 'Kanäle', mark: '06' },
+  { href: '/dashboard/usage', label: 'Nutzung', mark: '07' },
+  { href: '/dashboard/settings/billing', label: 'Abrechnung', mark: '08' },
+  { href: '/dashboard/settings/api-keys', label: 'API-Keys', mark: '09' },
+  { href: '/dashboard/settings/team', label: 'Team', mark: '10' },
+  { href: '/dashboard/settings/connectors', label: 'Connectoren', mark: '11' },
+  { href: '/dashboard/wiki', label: 'Wiki', mark: '12' },
 ]
 
 export function Sidebar({ shopName }: { shopName: string }) {

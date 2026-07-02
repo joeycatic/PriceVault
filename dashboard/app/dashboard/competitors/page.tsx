@@ -2,17 +2,14 @@ import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
+import { backendFetch, currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, Tenant } from '@/lib/types'
+import type { Competitor } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
 export default async function CompetitorsPage() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
   const { data } = tenant
     ? await supabase.from('competitors').select('*').eq('tenant_id', tenant.id).order('shop_name')
     : { data: [] }
@@ -39,9 +36,8 @@ export default async function CompetitorsPage() {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
     try {
-      const response = await fetch(`${process.env.BACKEND_URL}/scrape/test`, {
+      const response = await backendFetch('/scrape/test', tenant.id, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenant.id },
         body: JSON.stringify({
           url: input.url,
           selector_price: input.selectorPrice || null,

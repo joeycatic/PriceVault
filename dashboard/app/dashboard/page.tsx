@@ -3,21 +3,14 @@ import Link from 'next/link'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { PriceTable } from '@/components/ui/PriceTable'
+import { currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
-import type { LatestPrice, Tenant } from '@/lib/types'
+import type { LatestPrice } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase
-    .from('tenants')
-    .select('*')
-    .eq('user_id', user!.id)
-    .maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
 
   let rows: LatestPrice[] = []
   let priceSourceCount = 0
@@ -41,7 +34,7 @@ export default async function DashboardPage() {
   }
 
   const activePrices = rows.filter((row) => row.competitor_price !== null).length
-  const undercut = rows.filter((row) => Number(row.delta_pct ?? 0) > 0).length
+  const undercut = rows.filter((row) => Number(row.delta_pct ?? 0) < 0).length
   const unavailable = rows.filter((row) => row.in_stock === false).length
   const lastScrapedAt = rows
     .map((row) => row.scraped_at)

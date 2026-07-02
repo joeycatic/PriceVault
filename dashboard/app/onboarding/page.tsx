@@ -15,7 +15,7 @@ export default async function OnboardingPage() {
   const { data: shop } = await supabase
     .from('tenants')
     .select('id, shop_name, shop_url')
-    .eq('user_id', user.id)
+    .limit(1)
     .maybeSingle()
 
   const [productResult, competitorResult, mappingResult] = shop

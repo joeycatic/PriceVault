@@ -4,9 +4,12 @@ import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { MutationButton } from '@/components/ui/MutationButton'
 import { MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
+import { ExportButton } from '@/app/dashboard/products/[id]/ExportButton'
+import { currentTenant } from '@/lib/backend'
 import { parsePriceInput } from '@/lib/priceInput'
+import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, CompetitorProduct, LatestPrice, Product, Tenant } from '@/lib/types'
+import type { Competitor, CompetitorProduct, LatestPrice, Product } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
 
 type MappingRow = CompetitorProduct & {
@@ -48,11 +51,7 @@ function parseProductImport(input: string) {
 
 export default async function ProductsPage() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
 
   const [productResult, competitorResult, mappingResult, latestResult] = tenant
     ? await Promise.all([
@@ -73,6 +72,7 @@ export default async function ProductsPage() {
   const mappings = (mappingResult.data ?? []) as MappingRow[]
   const latestRows = (latestResult.data ?? []) as LatestPrice[]
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
+  const productLimit = planLimit(tenant?.plan).products
 
   async function createProduct(formData: FormData) {
     'use server'
@@ -83,6 +83,18 @@ export default async function ProductsPage() {
     const price = rawPrice ? parsePriceInput(rawPrice) : null
     if (!name || (rawPrice && price === null) || (price !== null && price < 0)) {
       return { ok: false, message: 'Bitte prüfe Produktname und Preis.' }
+    }
+    const limit = planLimit(tenant.plan).products
+    if (limit !== null) {
+      const { count, error: countError } = await client
+        .from('products')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenant.id)
+        .eq('active', true)
+      if (countError) return { ok: false, message: 'Das Produktlimit konnte nicht geprüft werden.' }
+      if ((count ?? 0) >= limit) {
+        return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Produkte.` }
+      }
     }
     const { error } = await client.from('products').insert({
       tenant_id: tenant.id,
@@ -109,6 +121,19 @@ export default async function ProductsPage() {
     if (rows.length > 250) return { ok: false, message: 'Bitte importiere maximal 250 Produkte auf einmal.' }
     if (rows.some((row) => row.our_price !== null && row.our_price < 0)) {
       return { ok: false, message: 'Mindestens ein Preis ist ungültig.' }
+    }
+    const limit = planLimit(tenant.plan).products
+    if (limit !== null) {
+      const { count, error: countError } = await client
+        .from('products')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenant.id)
+        .eq('active', true)
+      if (countError) return { ok: false, message: 'Das Produktlimit konnte nicht geprüft werden.' }
+      const activeCount = count ?? 0
+      if (activeCount + rows.length > limit) {
+        return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Produkte. Du kannst noch ${Math.max(0, limit - activeCount)} importieren.` }
+      }
     }
 
     const { error } = await client.from('products').insert(rows.map((row) => ({ ...row, tenant_id: tenant.id })))
@@ -223,6 +248,12 @@ export default async function ProductsPage() {
             </section>
           </div>
 
+          {productLimit !== null && (
+            <p className="text-sm text-vault-400">
+              Dein Plan nutzt {products.length} von {productLimit} aktiven Produkten.
+            </p>
+          )}
+
           <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="panel p-5 sm:p-6" aria-labelledby="new-mapping">
               <p className="eyebrow">Preisquelle</p>
@@ -293,6 +324,7 @@ export default async function ProductsPage() {
                               pendingLabel="Ruft ab …"
                               compact
                             />
+                            <ExportButton competitorProductId={mapping.id} />
                             <MutationButton id={mapping.id} label="Entfernen" pendingLabel="Wird entfernt …" action={deleteMapping} />
                           </td>
                         </tr>

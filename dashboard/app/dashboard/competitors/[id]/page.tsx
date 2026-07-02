@@ -3,17 +3,14 @@ import { revalidatePath } from 'next/cache'
 import { notFound } from 'next/navigation'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
+import { backendFetch, currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, Tenant } from '@/lib/types'
+import type { Competitor } from '@/lib/types'
 
 export default async function EditCompetitorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
   if (!tenant) notFound()
   const tenantId = tenant.id
 
@@ -50,9 +47,8 @@ export default async function EditCompetitorPage({ params }: { params: Promise<{
   async function testAction(input: { url: string; selectorPrice: string; selectorStock: string }) {
     'use server'
     try {
-      const response = await fetch(`${process.env.BACKEND_URL}/scrape/test`, {
+      const response = await backendFetch('/scrape/test', tenantId, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Tenant-ID': tenantId },
         body: JSON.stringify({
           url: input.url,
           selector_price: input.selectorPrice || null,

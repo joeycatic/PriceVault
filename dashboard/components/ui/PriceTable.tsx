@@ -6,6 +6,10 @@ import type { LatestPrice } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
 import { DeltaBadge } from './DeltaBadge'
 
+function urgencyScore(row: LatestPrice) {
+  return row.delta_pct === null ? Number.POSITIVE_INFINITY : Number(row.delta_pct)
+}
+
 export function PriceTable({ rows }: { rows: LatestPrice[] }) {
   const groups = useMemo(() => {
     const grouped = new Map<string, LatestPrice[]>()
@@ -17,15 +21,9 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
     return Array.from(grouped.entries())
       .map(([productId, entries]) => ({
         productId,
-        entries: entries.sort(
-          (a, b) => Number(b.delta_pct ?? Number.NEGATIVE_INFINITY) - Number(a.delta_pct ?? Number.NEGATIVE_INFINITY),
-        ),
+        entries: entries.sort((a, b) => urgencyScore(a) - urgencyScore(b)),
       }))
-      .sort(
-        (a, b) =>
-          Number(b.entries[0]?.delta_pct ?? Number.NEGATIVE_INFINITY) -
-          Number(a.entries[0]?.delta_pct ?? Number.NEGATIVE_INFINITY),
-      )
+      .sort((a, b) => urgencyScore(a.entries[0]) - urgencyScore(b.entries[0]))
   }, [rows])
 
   const [expanded, setExpanded] = useState<Set<string>>(
@@ -146,4 +144,3 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
     </div>
   )
 }
-

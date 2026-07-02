@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
+import { backendFetch } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 
 type ActionResult = { ok: boolean; message: string }
@@ -16,12 +17,9 @@ export async function runManualScrape(formData: FormData): Promise<ActionResult>
   const { data: tenant } = await supabase
     .from('tenants')
     .select('id')
-    .eq('user_id', user.id)
+    .limit(1)
     .maybeSingle()
   if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
-
-  const backendUrl = process.env.BACKEND_URL
-  if (!backendUrl) return { ok: false, message: 'BACKEND_URL ist nicht konfiguriert.' }
 
   const mappingId = String(formData.get('competitor_product_id') ?? '').trim()
   const body = {
@@ -30,12 +28,8 @@ export async function runManualScrape(formData: FormData): Promise<ActionResult>
   }
 
   try {
-    const response = await fetch(`${backendUrl.replace(/\/$/, '')}/scrape/run`, {
+    const response = await backendFetch('/scrape/run', tenant.id, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tenant-ID': tenant.id,
-      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(120_000),
     })
@@ -46,9 +40,11 @@ export async function runManualScrape(formData: FormData): Promise<ActionResult>
 
     const payload = (await response.json()) as {
       triggered?: number
+      queued?: number
       results?: Array<{ scrape_ok?: boolean }>
     }
     const triggered = payload.triggered ?? payload.results?.length ?? 0
+    const queued = payload.queued ?? triggered
     const failed = payload.results?.filter((result) => !result.scrape_ok).length ?? 0
 
     revalidatePath('/dashboard')
@@ -59,7 +55,7 @@ export async function runManualScrape(formData: FormData): Promise<ActionResult>
       return { ok: false, message: `${triggered} Abruf(e) ausgeführt, ${failed} davon fehlgeschlagen.` }
     }
 
-    return { ok: true, message: `${triggered} Preisabruf(e) abgeschlossen.` }
+    return { ok: true, message: `${queued} Preisabruf(e) wurden eingeplant.` }
   } catch {
     return { ok: false, message: 'Backend nicht erreichbar oder Scrape-Zeitlimit überschritten.' }
   }

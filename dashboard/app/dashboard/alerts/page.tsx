@@ -1,8 +1,10 @@
 import { revalidatePath } from 'next/cache'
 
 import { AlertForm } from '@/components/ui/AlertForm'
+import { currentTenant } from '@/lib/backend'
+import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
-import type { Alert, Competitor, Product, Tenant } from '@/lib/types'
+import type { Alert, Competitor, Product } from '@/lib/types'
 
 const conditionLabels: Record<Alert['condition'], string> = {
   below_pct: 'Mitbewerber günstiger als du',
@@ -13,11 +15,7 @@ const conditionLabels: Record<Alert['condition'], string> = {
 
 export default async function AlertsPage() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
   const [alertResult, productResult, competitorResult] = tenant
     ? await Promise.all([
         supabase.from('alerts').select('*').eq('tenant_id', tenant.id).order('created_at', { ascending: false }),
@@ -28,6 +26,7 @@ export default async function AlertsPage() {
   const alerts = (alertResult.data ?? []) as Alert[]
   const products = (productResult.data ?? []) as Product[]
   const competitors = (competitorResult.data ?? []) as Competitor[]
+  const alertLimit = planLimit(tenant?.plan).alerts
 
   async function saveAction(formData: FormData) {
     'use server'
@@ -42,6 +41,18 @@ export default async function AlertsPage() {
       cooldown_h: Number(formData.get('cooldown_h')),
     }
     const id = String(formData.get('id') || '')
+    const limit = planLimit(tenant.plan).alerts
+    if (!id && limit !== null) {
+      const { count, error: countError } = await client
+        .from('alerts')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenant.id)
+        .eq('active', true)
+      if (countError) return { ok: false, message: 'Das Preisalarm-Limit konnte nicht geprüft werden.' }
+      if ((count ?? 0) >= limit) {
+        return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Preisalarme.` }
+      }
+    }
     const result = id
       ? await client.from('alerts').update(values).eq('tenant_id', tenant.id).eq('id', id)
       : await client.from('alerts').insert({ ...values, tenant_id: tenant.id })
@@ -73,6 +84,11 @@ export default async function AlertsPage() {
           <section className="panel p-5 sm:p-6" aria-labelledby="new-alert">
             <p className="eyebrow">Neue Regel</p>
             <h2 id="new-alert" className="mb-6 mt-2 text-xl font-semibold">Preisalarm anlegen</h2>
+            {alertLimit !== null && (
+              <p className="mb-5 text-sm text-vault-400">
+                Dein Plan nutzt {alerts.filter((alert) => alert.active).length} von {alertLimit} aktiven Preisalarmen.
+              </p>
+            )}
             <AlertForm products={products} competitors={competitors} saveAction={saveAction} />
           </section>
 

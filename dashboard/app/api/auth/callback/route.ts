@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     data: { user },
   } = await supabase.auth.getUser()
   const { data: tenant } = user
-    ? await supabase.from('tenants').select('id').eq('user_id', user.id).maybeSingle()
+    ? await supabase.from('tenants').select('id').limit(1).maybeSingle()
     : { data: null }
 
   return NextResponse.redirect(new URL(tenant ? '/dashboard' : '/onboarding', url.origin))

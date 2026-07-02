@@ -1,8 +1,9 @@
 import { revalidatePath } from 'next/cache'
 
 import { CompanyForm } from '@/components/ui/ProductForms'
+import { currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
-import type { LatestPrice, Tenant } from '@/lib/types'
+import type { LatestPrice } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
 function validHttpUrl(value: string) {
@@ -16,11 +17,8 @@ function validHttpUrl(value: string) {
 
 export default async function CompanyPage() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  const { data: tenantData } = await supabase.from('tenants').select('*').eq('user_id', user!.id).maybeSingle()
-  const tenant = tenantData as Tenant | null
+  const tenant = await currentTenant()
+  const canEditCompany = tenant?.membership_role === 'owner'
 
   const [productResult, mappingResult, latestResult] = tenant
     ? await Promise.all([
@@ -39,6 +37,9 @@ export default async function CompanyPage() {
   async function updateCompany(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    if (tenant.membership_role !== 'owner') {
+      return { ok: false, message: 'Nur Owner dürfen das Unternehmen bearbeiten.' }
+    }
     const client = await createClient()
     const shopName = String(formData.get('shop_name') ?? '').trim()
     const shopUrl = String(formData.get('shop_url') ?? '').trim()
@@ -77,7 +78,13 @@ export default async function CompanyPage() {
             <p className="mt-2 text-sm leading-6 text-vault-300">
               Halte Shopname und Shop-URL stabil. Diese Angaben werden in Navigation, Onboarding-Kontext und späteren Reports genutzt.
             </p>
-            <CompanyForm action={updateCompany} shopName={tenant.shop_name} shopUrl={tenant.shop_url} />
+            {canEditCompany ? (
+              <CompanyForm action={updateCompany} shopName={tenant.shop_name} shopUrl={tenant.shop_url} />
+            ) : (
+              <div className="mt-5 border-l-2 border-l-vault-lime bg-vault-950 p-4 text-sm text-vault-300">
+                Nur Owner dürfen das Unternehmensprofil bearbeiten.
+              </div>
+            )}
           </section>
 
           <aside className="space-y-6">
