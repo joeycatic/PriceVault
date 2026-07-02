@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 
 const scrapeRunBody = `{
   "tenant_id": "<tenant-id>",
@@ -14,185 +15,206 @@ const importExample = `name;sku;price
 Mars Hydro SP3000;MH-SP3000;199,00
 Lumatek ATS 300W;LUM-300;279,90`
 
-const sections = [
+const chapters = [
   {
-    title: '1. Unternehmensprofil',
-    body: 'Lege zuerst dein eigenes Unternehmen mit Shopname und Shop-URL an. Diese Daten sind die Mandantenbasis und werden für Navigation, Referenzpreise und Reports genutzt.',
-    href: '/dashboard/company',
-    cta: 'Unternehmen öffnen',
+    id: 'setup',
+    mark: '01',
+    title: 'Setup-Reihenfolge',
+    summary: 'Mandant, Produktbasis und erste Preisquelle sauber anlegen.',
+    links: [
+      ['Unternehmen', '/dashboard/company'],
+      ['Produkte', '/dashboard/products'],
+      ['Mitbewerber', '/dashboard/competitors'],
+    ],
+    body: [
+      'Lege zuerst das eigene Unternehmen mit Shopname und Shop-URL an. Diese Daten sind die Mandantenbasis und erscheinen in Navigation, Reports und Referenzpreisen.',
+      'Danach folgen eigene Produkte. Die eigenen Preise sind die Vergleichsbasis für Preisabstände, Alerts und spätere Reports.',
+      'Zum Schluss werden Mitbewerber und konkrete Produkt-URLs verbunden. Eine Preisquelle besteht aus eigenem Produkt, Mitbewerber und Produktseite beim Mitbewerber.',
+    ],
   },
   {
-    title: '2. Eigene Produkte',
-    body: 'Produkte können einzeln, per kopierter CSV-Tabelle oder per CSV-Datei importiert werden. Unterstützt werden Komma, Semikolon und Tab als Trennzeichen.',
-    href: '/dashboard/products',
-    cta: 'Produkte pflegen',
+    id: 'scraping',
+    mark: '02',
+    title: 'Scraping-Betrieb',
+    summary: 'Wie ARQ, Redis, Browserless und Preisquellen zusammenspielen.',
+    links: [
+      ['Scrape-Jobs', '/dashboard/scrapes'],
+      ['Mitbewerber', '/dashboard/competitors'],
+    ],
+    body: [
+      'Der API-Prozess plant Scrapes nur ein. Browserarbeit läuft im ARQ-Worker über Redis, damit Webanfragen kurz bleiben und Browserless CDP sauber genutzt wird.',
+      'Globale Abrufe planen alle aktiven Quellen ein. Zeilenaktionen planen nur eine einzelne Preisquelle ein.',
+      'Wenn automatische Preisfindung schwankt, hinterlege einen CSS-Selektor direkt an der Preisquelle.',
+    ],
   },
   {
-    title: '3. Mitbewerber',
-    body: 'Mitbewerber enthalten Basis-URL, optionale Standard-Selektoren und Abrufintervall. Produktgenaue URLs werden danach als Preisquellen hinterlegt.',
-    href: '/dashboard/competitors',
-    cta: 'Mitbewerber pflegen',
+    id: 'api',
+    mark: '03',
+    title: 'Backend-API',
+    summary: 'Header, Scrape-Endpunkt und Tenant-Sicherheitsmodell.',
+    links: [
+      ['API-Keys', '/dashboard/settings/api-keys'],
+      ['Einstellungen', '/dashboard/settings/security'],
+    ],
+    body: [
+      'Alle geschützten Backend-Routen erwarten Supabase Bearer Token und X-Tenant-ID. Die Backend-Prüfung muss zur Supabase-Sitzung passen.',
+      'Für manuelle Scrapes wird POST /scrape/run genutzt. Ohne competitor_product_ids werden alle aktiven Quellen eingeplant.',
+    ],
+  },
+  {
+    id: 'imports',
+    mark: '04',
+    title: 'Produktimport',
+    summary: 'CSV, kopierte Tabellen und deutsches Preisformat.',
+    links: [['Produkte', '/dashboard/products']],
+    body: [
+      'Der Import akzeptiert eingefügten Text oder Dateien. Kopfzeile ist optional. Komma, Semikolon und Tab werden als Trennzeichen erkannt.',
+      'Erwartete Spalten sind Name, optional SKU und optional Preis. Preise dürfen deutsch formatiert sein, etwa 199,00.',
+    ],
   },
 ]
+
+const quickLinks = [
+  ['Preisübersicht', '/dashboard'],
+  ['Produkte', '/dashboard/products'],
+  ['Mitbewerber', '/dashboard/competitors'],
+  ['Preisalarme', '/dashboard/alerts'],
+  ['Einstellungen', '/dashboard/settings'],
+]
+
+function FoldableChapter({ chapter, children }: { chapter: (typeof chapters)[number], children?: ReactNode }) {
+  return (
+    <details id={chapter.id} className="group border border-vault-700 bg-vault-900/80 open:border-vault-lime/35 open:bg-vault-lime/[0.035]" open={chapter.id === 'setup'}>
+      <summary className="grid cursor-pointer list-none gap-4 px-4 py-4 transition hover:bg-vault-800/70 sm:grid-cols-[56px_minmax(0,1fr)_24px] sm:px-5">
+        <span className="font-mono text-[11px] font-bold text-vault-lime">{chapter.mark}</span>
+        <span className="min-w-0">
+          <span className="block font-semibold text-vault-100">{chapter.title}</span>
+          <span className="mt-1 block text-sm leading-6 text-vault-400">{chapter.summary}</span>
+        </span>
+        <span className="hidden h-6 w-6 place-items-center border border-vault-700 font-mono text-xs text-vault-300 transition group-open:rotate-45 group-open:border-vault-lime group-open:text-vault-lime sm:grid">
+          +
+        </span>
+      </summary>
+      <div className="border-t border-vault-700 px-4 py-5 sm:px-5">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="space-y-3 text-sm leading-6 text-vault-300">
+            {chapter.body.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {children}
+          </div>
+          <div className="grid content-start gap-2">
+            {chapter.links.map(([label, href]) => (
+              <Link key={href} href={href} className="border border-vault-700 bg-vault-950/80 px-3 py-2 text-xs font-semibold text-vault-300 transition hover:border-vault-lime/40 hover:text-vault-lime">
+                {label} →
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
+    </details>
+  )
+}
 
 export default function WikiPage() {
   const backendUrl = process.env.BACKEND_URL ?? 'Nicht konfiguriert'
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Langfristige Referenz</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">PriceVault Wiki</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">
-          Betriebswissen für Onboarding, Produktimport, Scraping, Backend-API und Fehlerbehebung. Diese Seite ist als dauerhafte interne Referenz gedacht.
-        </p>
+      <header className="mb-8 grid gap-6 border-b border-vault-700 pb-7 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <p className="eyebrow">Referenz</p>
+          <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">PriceVault Referenz</h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-vault-300">
+            Betriebswissen für Einrichtung, Preisquellen, Scraping, API und Fehlerbehebung. Kompakt genug für den Alltag, vollständig genug für Supportfälle.
+          </p>
+        </div>
+        <div className="border border-vault-lime/30 bg-vault-lime/10 p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-vault-lime">Backend</p>
+          <p className="mt-2 break-all font-mono text-sm text-vault-100">{backendUrl}</p>
+        </div>
       </header>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="space-y-6">
-          <section className="panel p-5 sm:p-6" aria-labelledby="wiki-setup">
-            <p className="eyebrow">Setup-Reihenfolge</p>
-            <h2 id="wiki-setup" className="mt-2 text-xl font-semibold">Empfohlener Ablauf</h2>
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              {sections.map((section) => (
-                <article key={section.title} className="flex min-h-56 flex-col border border-vault-700 bg-vault-950/70 p-4">
-                  <h3 className="font-semibold">{section.title}</h3>
-                  <p className="mt-3 flex-1 text-sm leading-6 text-vault-300">{section.body}</p>
-                  <Link className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-vault-lime" href={section.href}>
-                    {section.cta} →
-                  </Link>
-                </article>
-              ))}
-            </div>
-          </section>
+      <div className="grid items-start gap-6 xl:grid-cols-[240px_minmax(0,1fr)_320px]">
+        <aside className="sticky top-24 hidden xl:block">
+          <nav className="grid gap-1 border border-vault-700 bg-vault-900/80 p-2" aria-label="Referenzindex">
+            {chapters.map((chapter) => (
+              <a key={chapter.id} href={`#${chapter.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs text-vault-300 transition hover:bg-vault-800 hover:text-vault-lime">
+                <span className="font-mono text-vault-500">{chapter.mark}</span>
+                <span>{chapter.title}</span>
+              </a>
+            ))}
+          </nav>
+        </aside>
 
-          <section className="panel p-5 sm:p-6" aria-labelledby="wiki-scraping">
-            <p className="eyebrow">Scraping</p>
-            <h2 id="wiki-scraping" className="mt-2 text-xl font-semibold">Wie Preisabrufe funktionieren</h2>
-            <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              <div className="border border-vault-700 bg-vault-950/70 p-4">
-                <h3 className="font-semibold">Automatisch</h3>
-                <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Der ARQ-Worker ruft aktive Preisquellen über Redis-Jobs ab. Der API-Prozess nimmt nur Anfragen entgegen und führt keine Browser-Jobs im Webprozess aus.
-                </p>
+        <section className="space-y-3" aria-label="Referenzkapitel">
+          <FoldableChapter chapter={chapters[0]} />
+          <FoldableChapter chapter={chapters[1]} />
+          <FoldableChapter chapter={chapters[2]}>
+            <div className="mt-4 overflow-hidden border border-vault-700">
+              <div className="border-b border-vault-700 bg-vault-800/70 px-4 py-3">
+                <p className="font-mono text-xs text-vault-100">POST /scrape/run</p>
               </div>
-              <div className="border border-vault-700 bg-vault-950/70 p-4">
-                <h3 className="font-semibold">Manuell</h3>
-                <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Über die Buttons „Jetzt abrufen“ werden Redis-Jobs eingeplant. Global bedeutet alle aktiven Quellen; pro Tabellenzeile bedeutet nur diese eine Quelle.
-                </p>
-              </div>
-              <div className="border border-vault-700 bg-vault-950/70 p-4">
-                <h3 className="font-semibold">Preisquellen</h3>
-                <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Eine Preisquelle verbindet dein Produkt, einen Mitbewerber und die konkrete Produkt-URL beim Mitbewerber. Optionale CSS-Selektoren helfen, wenn die automatische Erkennung nicht zuverlässig ist.
-                </p>
-              </div>
-              <div className="border border-vault-700 bg-vault-950/70 p-4">
-                <h3 className="font-semibold">Ergebnisanzeige</h3>
-                <p className="mt-2 text-sm leading-6 text-vault-300">
-                  Der Produktbereich zeigt den letzten Abruf, gefundene Preise und fehlgeschlagene Scrapes. Die Preisübersicht nutzt die jeweils neuesten gespeicherten Snapshots.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel p-5 sm:p-6" aria-labelledby="wiki-api">
-            <p className="eyebrow">Backend API</p>
-            <h2 id="wiki-api" className="mt-2 text-xl font-semibold">Scraping-Endpunkte</h2>
-            <div className="mt-5 space-y-4 text-sm leading-6 text-vault-300">
-              <p>
-                Das Dashboard liest die Backend-Basis-URL aus <span className="font-mono text-vault-100">BACKEND_URL</span>.
-                Aktuell konfiguriert: <span className="font-mono text-vault-lime">{backendUrl}</span>
-              </p>
-              <div className="overflow-hidden border border-vault-700">
-                <div className="border-b border-vault-700 bg-vault-800/70 px-4 py-3">
-                  <p className="font-mono text-xs text-vault-100">POST /scrape/run</p>
+              <div className="grid gap-px bg-vault-700 md:grid-cols-2">
+                <div className="bg-vault-950 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Alle aktiven Quellen</p>
+                  <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{scrapeRunBody}</code></pre>
                 </div>
-                <div className="grid gap-px bg-vault-700 md:grid-cols-2">
-                  <div className="bg-vault-950 p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Alle aktiven Quellen</p>
-                    <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{scrapeRunBody}</code></pre>
-                  </div>
-                  <div className="bg-vault-950 p-4">
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Einzelne Quelle</p>
-                    <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{singleScrapeBody}</code></pre>
-                  </div>
+                <div className="bg-vault-950 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Einzelne Quelle</p>
+                  <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{singleScrapeBody}</code></pre>
                 </div>
               </div>
-              <p>
-                Erforderliche Header: <span className="font-mono text-vault-100">Content-Type: application/json</span> und{' '}
-                <span className="font-mono text-vault-100">Authorization: Bearer &lt;supabase-access-token&gt;</span> sowie{' '}
-                <span className="font-mono text-vault-100">X-Tenant-ID: &lt;tenant-id&gt;</span>. Backend und Body müssen zur Supabase-Sitzung gehören.
-              </p>
             </div>
-          </section>
+            <p>
+              Erforderliche Header: <span className="font-mono text-vault-100">Content-Type: application/json</span>,{' '}
+              <span className="font-mono text-vault-100">Authorization: Bearer &lt;supabase-access-token&gt;</span> und{' '}
+              <span className="font-mono text-vault-100">X-Tenant-ID: &lt;tenant-id&gt;</span>.
+            </p>
+          </FoldableChapter>
+          <FoldableChapter chapter={chapters[3]}>
+            <pre className="mt-4 overflow-x-auto border border-vault-700 bg-vault-950 p-4 text-xs text-vault-200"><code>{importExample}</code></pre>
+          </FoldableChapter>
+        </section>
 
-          <section className="panel p-5 sm:p-6" aria-labelledby="wiki-imports">
-            <p className="eyebrow">Produktimport</p>
-            <h2 id="wiki-imports" className="mt-2 text-xl font-semibold">CSV-Format</h2>
-            <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="text-sm leading-6 text-vault-300">
-                <p>
-                  Der Import akzeptiert eingefügten Text oder eine Datei. Kopfzeile ist optional. Pro Import werden maximal 250 Produkte verarbeitet.
-                </p>
-                <p className="mt-3">
-                  Erwartete Spalten: <span className="font-mono text-vault-100">Name</span>, optional{' '}
-                  <span className="font-mono text-vault-100">SKU</span>, optional <span className="font-mono text-vault-100">Preis</span>.
-                  Preise dürfen deutsch formatiert sein, zum Beispiel <span className="font-mono text-vault-100">199,00</span>.
-                </p>
-              </div>
-              <pre className="overflow-x-auto border border-vault-700 bg-vault-950 p-4 text-xs text-vault-200"><code>{importExample}</code></pre>
-            </div>
-          </section>
-        </div>
-
-        <aside className="space-y-6">
-          <section className="panel p-5" aria-labelledby="wiki-quicklinks">
-            <p className="eyebrow">Quicklinks</p>
-            <h2 id="wiki-quicklinks" className="mt-2 font-semibold">Wichtige Bereiche</h2>
+        <aside className="space-y-4">
+          <section className="border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-quicklinks">
+            <p className="eyebrow">Direktzugriff</p>
+            <h2 id="reference-quicklinks" className="mt-2 font-semibold">Arbeitsbereiche</h2>
             <div className="mt-4 grid gap-2">
-              {[
-                ['Unternehmen', '/dashboard/company'],
-                ['Produkte', '/dashboard/products'],
-                ['Mitbewerber', '/dashboard/competitors'],
-                ['Preisalarme', '/dashboard/alerts'],
-                ['Preisübersicht', '/dashboard'],
-              ].map(([label, href]) => (
-                <Link key={href} href={href} className="border border-vault-700 px-3 py-2 text-sm text-vault-300 transition hover:border-vault-lime/40 hover:text-vault-lime">
+              {quickLinks.map(([label, href]) => (
+                <Link key={href} href={href} className="border border-vault-700 bg-vault-950/70 px-3 py-2 text-sm text-vault-300 transition hover:border-vault-lime/40 hover:text-vault-lime">
                   {label} →
                 </Link>
               ))}
             </div>
           </section>
 
-          <section className="border border-vault-lime/30 bg-vault-lime/10 p-5" aria-labelledby="wiki-troubleshooting">
-            <p className="eyebrow text-vault-lime">Fehlerbehebung</p>
-            <h2 id="wiki-troubleshooting" className="mt-2 font-semibold">Wenn Scraping nicht läuft</h2>
+          <section className="border border-vault-lime/30 bg-vault-lime/10 p-5" aria-labelledby="reference-troubleshooting">
+            <p className="eyebrow">Fehlerbehebung</p>
+            <h2 id="reference-troubleshooting" className="mt-2 font-semibold">Scraping läuft nicht</h2>
             <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-vault-300">
-              <li>Prüfen, ob <span className="font-mono text-vault-100">BACKEND_URL</span> gesetzt und erreichbar ist.</li>
-              <li>Mitbewerber-URL und Produkt-URL im Browser öffnen.</li>
-              <li>Bei dynamischen Shops einen Preis-Selektor hinterlegen.</li>
-              <li>Manuellen Abruf für eine einzelne Quelle starten und Ergebnis abwarten.</li>
-              <li>Backend-Logs nach Scraper- oder Timeout-Fehlern prüfen.</li>
+              <li><span className="font-mono text-vault-100">BACKEND_URL</span> prüfen.</li>
+              <li>Produkt-URL beim Mitbewerber im Browser öffnen.</li>
+              <li>Bei dynamischen Shops Preis-Selektor setzen.</li>
+              <li>Einzelabruf starten und Job-Verlauf prüfen.</li>
+              <li>Backend-Logs nach Timeout oder Browserless-Fehlern prüfen.</li>
             </ol>
           </section>
 
-          <section className="panel p-5" aria-labelledby="wiki-env">
+          <section className="border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-env">
             <p className="eyebrow">Betrieb</p>
-            <h2 id="wiki-env" className="mt-2 font-semibold">Relevante Variablen</h2>
+            <h2 id="reference-env" className="mt-2 font-semibold">Variablen</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <div>
                 <dt className="font-mono text-vault-100">BACKEND_URL</dt>
-                <dd className="mt-1 text-vault-500">Basis-URL der FastAPI, lokal meist http://localhost:8000.</dd>
+                <dd className="mt-1 text-vault-500">FastAPI-Basis-URL für Dashboard-Aufrufe.</dd>
               </div>
               <div>
-                <dt className="font-mono text-vault-100">SCRAPE_CONCURRENCY</dt>
-                <dd className="mt-1 text-vault-500">Parallele Scrapes im Backend. Standard ist 3.</dd>
+                <dt className="font-mono text-vault-100">REDIS_URL</dt>
+                <dd className="mt-1 text-vault-500">ARQ-Queue für Scrapes, Alerts und Mails.</dd>
               </div>
               <div>
-                <dt className="font-mono text-vault-100">NEXT_PUBLIC_SUPABASE_URL</dt>
-                <dd className="mt-1 text-vault-500">Supabase-Projekt für Dashboard-Auth und Daten.</dd>
+                <dt className="font-mono text-vault-100">BROWSERLESS_TOKEN</dt>
+                <dd className="mt-1 text-vault-500">Remote-Browser-Zugriff für CDP-Scraping.</dd>
               </div>
             </dl>
           </section>

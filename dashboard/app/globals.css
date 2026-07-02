@@ -77,6 +77,14 @@ body {
   .eyebrow {
     @apply text-[11px] font-bold uppercase tracking-[0.2em] text-vault-lime;
   }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .verification-panel {
