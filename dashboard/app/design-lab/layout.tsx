@@ -11,6 +11,12 @@ const concepts = [
   { href: '/design-lab/commerce-desk', label: '08 Commerce' },
   { href: '/design-lab/soft-console', label: '09 Soft Console' },
   { href: '/design-lab/brutalist-ops', label: '10 Brutalist' },
+  { href: '/design-lab/radar', label: '11 Radar' },
+  { href: '/design-lab/terminal', label: '12 Terminal' },
+  { href: '/design-lab/diff-view', label: '13 Diff View' },
+  { href: '/design-lab/trading-desk', label: '14 Trading Desk' },
+  { href: '/design-lab/field-notebook', label: '15 Field Notes' },
+  { href: '/design-lab/clean-workspace', label: '16 Clean' },
 ]
 
 export default function DesignLabLayout({ children }: { children: React.ReactNode }) {

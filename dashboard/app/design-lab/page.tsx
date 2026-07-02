@@ -81,6 +81,54 @@ const concepts = [
     description: 'Kompromisslose Kontraste, harte Raster und maximale Sichtbarkeit kritischer Daten.',
     palette: ['#f0f0e8', '#000000', '#f2ff48', '#ff5c39'],
   },
+  {
+    href: '/design-lab/radar',
+    number: '11',
+    name: 'Radar Surveillance',
+    reference: 'Control Room Extension',
+    description: 'Kreisförmiger Radar-Sweep, Signalqualität und Ping-Alarme für neue Abweichungen.',
+    palette: ['#07100d', '#55efaa', '#29483c', '#ff6c4c'],
+  },
+  {
+    href: '/design-lab/terminal',
+    number: '12',
+    name: 'Terminal Native',
+    reference: 'CLI Workspace',
+    description: 'Prompt-gesteuerte Aktionen, ASCII-Tabellen und eine kompromisslose Terminal-Sprache.',
+    palette: ['#050706', '#9bf6b4', '#275d37', '#ff776d'],
+  },
+  {
+    href: '/design-lab/diff-view',
+    number: '13',
+    name: 'Price Diff',
+    reference: 'Code Review Metaphor',
+    description: 'Preisänderungen als Git-Diff mit Zeilengutter, alten Werten und hervorgehobenen Updates.',
+    palette: ['#0d1117', '#161b22', '#2ea043', '#f85149'],
+  },
+  {
+    href: '/design-lab/trading-desk',
+    number: '14',
+    name: 'Trading Desk',
+    reference: 'Dense Market Terminal',
+    description: 'Laufender Preisticker, Live Book und maximale Informationsdichte für Power User.',
+    palette: ['#101317', '#ffb020', '#52d49a', '#ff7b72'],
+  },
+  {
+    href: '/design-lab/field-notebook',
+    number: '15',
+    name: 'Field Notebook',
+    reference: 'Analyst Notes',
+    description: 'Dot-Grid-Papier, handschriftliche Randnotizen und schnelle strukturierte Beobachtungen.',
+    palette: ['#f8f5e9', '#24342e', '#d45b3e', '#fff3a8'],
+  },
+  {
+    href: '/design-lab/clean-workspace',
+    number: '16',
+    name: 'Clean Workspace',
+    reference: 'Restrained SaaS',
+    description: 'Leise Typografie, viel Weißraum und nur die nötigsten Statusfarben und Aktionen.',
+    palette: ['#ffffff', '#17211d', '#edf2ef', '#176b4d'],
+  },
 ]
 
 export default function DesignLabPage() {
@@ -88,7 +136,7 @@ export default function DesignLabPage() {
     <main className="mx-auto max-w-[1440px] px-5 py-12 sm:px-8 lg:px-12 lg:py-20">
       <header className="grid gap-8 border-b border-black pb-10 lg:grid-cols-[1fr_24rem] lg:items-end">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Zehn Richtungen / Ein Produkt</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-black/45">Sechzehn Richtungen / Ein Produkt</p>
           <h1 className="mt-4 max-w-4xl text-4xl font-semibold leading-[1.02] sm:text-6xl lg:text-7xl">
             Wie soll sich PriceVault bei der täglichen Arbeit anfühlen?
           </h1>

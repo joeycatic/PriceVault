@@ -13,6 +13,12 @@ const concepts: ConceptName[] = [
   'commerce-desk',
   'soft-console',
   'brutalist-ops',
+  'radar',
+  'terminal',
+  'diff-view',
+  'trading-desk',
+  'field-notebook',
+  'clean-workspace',
 ]
 
 export function generateStaticParams() {
