@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 export async function GET(request: Request) {
   const url = new URL(request.url)
   const code = url.searchParams.get('code')
+  const next = url.searchParams.get('next')
   if (!code) {
     return NextResponse.redirect(new URL('/login?auth_error=missing_code', url.origin))
   }
@@ -25,6 +26,10 @@ export async function GET(request: Request) {
   const { data: tenant } = user
     ? await supabase.from('tenants').select('id').limit(1).maybeSingle()
     : { data: null }
+
+  if (next?.startsWith('/')) {
+    return NextResponse.redirect(new URL(next, url.origin))
+  }
 
   return NextResponse.redirect(new URL(tenant ? '/dashboard' : '/onboarding', url.origin))
 }

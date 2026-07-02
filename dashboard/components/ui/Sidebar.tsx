@@ -21,8 +21,9 @@ const links = [
   { href: '/dashboard/settings/api-keys', label: 'API-Keys', mark: '12' },
   { href: '/dashboard/settings/team', label: 'Team', mark: '13' },
   { href: '/dashboard/settings/connectors', label: 'Connectoren', mark: '14' },
-  { href: '/dashboard/admin', label: 'Support', mark: '15' },
-  { href: '/dashboard/wiki', label: 'Wiki', mark: '16' },
+  { href: '/dashboard/account', label: 'Mein Konto', mark: '15' },
+  { href: '/dashboard/admin', label: 'Support', mark: '16' },
+  { href: '/dashboard/wiki', label: 'Wiki', mark: '17' },
 ]
 
 export function Sidebar({ shopName }: { shopName: string }) {

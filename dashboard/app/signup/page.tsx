@@ -1,0 +1,109 @@
+'use client'
+
+import Link from 'next/link'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+import { useSupabase } from '@/components/providers/SupabaseProvider'
+
+export default function SignupPage() {
+  const router = useRouter()
+  const { supabase } = useSupabase()
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [status, setStatus] = useState<'idle' | 'creating' | 'sent'>('idle')
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    if (password.length < 8) {
+      setError('Das Passwort muss mindestens 8 Zeichen lang sein.')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Die Passwörter stimmen nicht überein.')
+      return
+    }
+
+    setStatus('creating')
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: name },
+        emailRedirectTo: `${window.location.origin}/api/auth/callback`,
+      },
+    })
+    if (signUpError) {
+      setError('Das Konto konnte nicht erstellt werden. Prüfe die Daten oder nutze Login.')
+      setStatus('idle')
+      return
+    }
+    if (data.session) {
+      router.replace('/onboarding')
+      router.refresh()
+      return
+    }
+    setStatus('sent')
+  }
+
+  return (
+    <main className="relative grid min-h-screen place-items-center overflow-hidden px-5 py-12">
+      <div className="pointer-events-none absolute inset-y-0 left-[7%] w-px bg-vault-700/60" />
+      <div className="pointer-events-none absolute left-[7%] top-16 h-16 w-1 bg-vault-lime" />
+      <section className="panel relative w-full max-w-md p-7 sm:p-10">
+        <div className="absolute right-0 top-0 h-2 w-20 bg-vault-lime" />
+        <div className="mb-10 flex items-center justify-between gap-3">
+          <Link href="/" className="flex items-center gap-3" aria-label="PriceVault Start">
+            <span className="grid h-9 w-9 place-items-center bg-vault-lime font-black text-vault-950">PV</span>
+            <span className="text-lg font-bold tracking-tight">PriceVault</span>
+          </Link>
+          <Link href="/login" className="text-xs font-semibold text-vault-lime hover:underline">
+            Einloggen
+          </Link>
+        </div>
+
+        <p className="eyebrow">Account Registrierung</p>
+        <h1 className="mt-3 text-3xl font-bold tracking-[-0.03em]">Konto erstellen</h1>
+        <p className="mt-3 max-w-sm text-sm leading-6 text-vault-300">
+          Erstelle dein Nutzerkonto. Danach richtest du Shop, Produkte und Preisquellen ein.
+        </p>
+
+        {status === 'sent' ? (
+          <div className="mt-8 border-l-2 border-vault-lime bg-vault-lime/5 p-5" aria-live="polite">
+            <p className="font-semibold">E-Mail bestätigen</p>
+            <p className="mt-1 text-sm leading-6 text-vault-300">
+              Wir haben einen Bestätigungslink an {email} gesendet.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="mt-8 space-y-5">
+            <label>
+              <span className="field-label">Name</span>
+              <input className="field" autoComplete="name" required value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname" />
+            </label>
+            <label>
+              <span className="field-label">E-Mail-Adresse</span>
+              <input className="field" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@unternehmen.de" />
+            </label>
+            <label>
+              <span className="field-label">Passwort</span>
+              <input className="field" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen" />
+            </label>
+            <label>
+              <span className="field-label">Passwort bestätigen</span>
+              <input className="field" type="password" autoComplete="new-password" required minLength={8} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Noch einmal eingeben" />
+            </label>
+            {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
+            <button className="button-primary w-full" disabled={status === 'creating'}>
+              {status === 'creating' ? 'Konto wird erstellt ...' : 'Registrieren'}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
+  )
+}
