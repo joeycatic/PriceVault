@@ -13,8 +13,9 @@ export default function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [status, setStatus] = useState<'idle' | 'creating' | 'sent'>('idle')
+  const [status, setStatus] = useState<'idle' | 'creating' | 'sent' | 'resending'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const redirectTo = typeof window === 'undefined' ? undefined : `${window.location.origin}/api/auth/callback`
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -34,7 +35,7 @@ export default function SignupPage() {
       password,
       options: {
         data: { full_name: name },
-        emailRedirectTo: `${window.location.origin}/api/auth/callback`,
+        emailRedirectTo: redirectTo,
       },
     })
     if (signUpError) {
@@ -42,9 +43,30 @@ export default function SignupPage() {
       setStatus('idle')
       return
     }
+    if (data.user?.identities && data.user.identities.length === 0) {
+      setError('Für diese E-Mail existiert bereits ein Konto. Bitte einloggen oder Passwort zurücksetzen.')
+      setStatus('idle')
+      return
+    }
     if (data.session) {
       router.replace('/onboarding')
       router.refresh()
+      return
+    }
+    setStatus('sent')
+  }
+
+  async function resendConfirmation() {
+    setError(null)
+    setStatus('resending')
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: redirectTo },
+    })
+    if (resendError) {
+      setError('Der Bestätigungslink konnte nicht erneut gesendet werden. Prüfe die Adresse oder nutze Login.')
+      setStatus('sent')
       return
     }
     setStatus('sent')
@@ -72,12 +94,24 @@ export default function SignupPage() {
           Erstelle dein Nutzerkonto. Danach richtest du Shop, Produkte und Preisquellen ein.
         </p>
 
-        {status === 'sent' ? (
+        {status === 'sent' || status === 'resending' ? (
           <div className="mt-8 border-l-2 border-vault-lime bg-vault-lime/5 p-5" aria-live="polite">
             <p className="font-semibold">E-Mail bestätigen</p>
             <p className="mt-1 text-sm leading-6 text-vault-300">
-              Wir haben einen Bestätigungslink an {email} gesendet.
+              Wenn die Adresse neu ist, wurde ein Bestätigungslink an {email} gesendet.
             </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold">
+              <button type="button" className="text-vault-lime hover:underline" onClick={resendConfirmation} disabled={status === 'resending'}>
+                {status === 'resending' ? 'Wird erneut gesendet ...' : 'Link erneut senden'}
+              </button>
+              <Link href="/login" className="text-vault-lime hover:underline">
+                Zum Login
+              </Link>
+              <Link href="/reset-password" className="text-vault-lime hover:underline">
+                Passwort zurücksetzen
+              </Link>
+            </div>
+            {error && <p className="mt-3 text-sm text-red-300" role="alert">{error}</p>}
           </div>
         ) : (
           <form onSubmit={submit} className="mt-8 space-y-5">
