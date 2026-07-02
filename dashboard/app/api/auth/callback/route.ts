@@ -28,6 +28,14 @@ export async function GET(request: Request) {
     : { data: null }
 
   if (next?.startsWith('/')) {
+    if (!tenant && next.startsWith('/dashboard')) {
+      const onboardingUrl = new URL('/onboarding', url.origin)
+      onboardingUrl.searchParams.set('next', next)
+      if (next.startsWith('/dashboard/account')) {
+        onboardingUrl.searchParams.set('account_setup', '1')
+      }
+      return NextResponse.redirect(onboardingUrl)
+    }
     return NextResponse.redirect(new URL(next, url.origin))
   }
 

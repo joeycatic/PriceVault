@@ -5,7 +5,14 @@ import { createClient } from '@/lib/supabase/server'
 
 import { saveFirstProduct, saveFirstSource, saveShop } from './actions'
 
-export default async function OnboardingPage() {
+function safeNextPath(value: string | string[] | undefined) {
+  if (typeof value !== 'string') return null
+  if (!value.startsWith('/dashboard')) return null
+  if (value.startsWith('//')) return null
+  return value
+}
+
+export default async function OnboardingPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -29,6 +36,9 @@ export default async function OnboardingPage() {
   const products = productResult.data ?? []
   const competitors = competitorResult.data ?? []
   const initialStep = !shop ? 1 : !products.length ? 2 : !competitors.length || !mappingResult.count ? 3 : 4
+  const params = searchParams ? await searchParams : {}
+  const accountSetupHint = params.account_setup === '1'
+  const postSetupHref = safeNextPath(params.next) ?? '/dashboard'
 
   return (
     <OnboardingWizard
@@ -40,6 +50,8 @@ export default async function OnboardingPage() {
       saveShop={saveShop}
       saveProduct={saveFirstProduct}
       saveSource={saveFirstSource}
+      accountSetupHint={accountSetupHint}
+      postSetupHref={postSetupHref}
     />
   )
 }

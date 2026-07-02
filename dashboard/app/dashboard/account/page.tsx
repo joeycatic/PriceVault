@@ -14,6 +14,7 @@ export default async function AccountPage({ searchParams }: { searchParams?: Pro
   const tenant = await currentTenant()
   const params = searchParams ? await searchParams : {}
   const passwordUpdated = params.password === 'updated'
+  const completeAccount = params.complete === '1'
   const fullName = String(user.user_metadata?.full_name ?? '')
 
   return (
@@ -29,6 +30,15 @@ export default async function AccountPage({ searchParams }: { searchParams?: Pro
       {passwordUpdated && (
         <div className="mb-6 border-l-2 border-vault-lime bg-vault-lime/5 p-4 text-sm text-vault-100">
           Passwort aktualisiert. Du bist jetzt angemeldet.
+        </div>
+      )}
+
+      {completeAccount && (
+        <div className="mb-6 border-l-2 border-vault-lime bg-vault-lime/5 p-5">
+          <p className="font-semibold text-vault-100">Account vervollständigen</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
+            Dein Magic-Link Login ist aktiv. Erstelle unten ein Passwort, damit du dich künftig auch mit E-Mail und Passwort anmelden kannst.
+          </p>
         </div>
       )}
 

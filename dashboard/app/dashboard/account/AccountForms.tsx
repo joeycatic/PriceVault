@@ -29,7 +29,10 @@ export function PasswordForm() {
 
   return (
     <form action={formAction} className="panel p-5">
-      <h2 className="text-base font-semibold">Passwort</h2>
+      <h2 className="text-base font-semibold">Passwort erstellen oder ändern</h2>
+      <p className="mt-2 text-sm leading-6 text-vault-300">
+        Wenn du bisher Magic Links genutzt hast, legst du hier dein Passwort für den normalen Login fest.
+      </p>
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <label>
           <span className="field-label">Neues Passwort</span>

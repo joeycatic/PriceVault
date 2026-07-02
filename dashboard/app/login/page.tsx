@@ -63,9 +63,12 @@ function LoginContent() {
       return
     }
 
+    const accountSetupNext = '/dashboard/account?complete=1'
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/api/auth/callback` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(accountSetupNext)}`,
+      },
     })
     if (authError) {
       setError('Der Anmeldelink konnte nicht gesendet werden. Bitte versuche es erneut.')
@@ -124,6 +127,9 @@ function LoginContent() {
             <p className="font-semibold">Postfach prüfen</p>
             <p className="mt-1 text-sm leading-6 text-vault-300">
               Der Anmeldelink wurde an {email} gesendet.
+            </p>
+            <p className="mt-3 text-xs leading-5 text-vault-400">
+              Falls du bisher nur Magic Links genutzt hast, kannst du nach dem Öffnen des Links in Mein Konto ein Passwort erstellen.
             </p>
           </div>
         ) : (

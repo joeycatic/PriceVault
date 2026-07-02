@@ -73,6 +73,8 @@ export function OnboardingWizard({
   saveShop,
   saveProduct,
   saveSource,
+  accountSetupHint = false,
+  postSetupHref = '/dashboard',
 }: {
   initialStep: number
   initialShop: { shop_name: string; shop_url: string } | null
@@ -82,6 +84,8 @@ export function OnboardingWizard({
   saveShop: (formData: FormData) => Promise<OnboardingResult>
   saveProduct: (formData: FormData) => Promise<OnboardingResult>
   saveSource: (formData: FormData) => Promise<OnboardingResult>
+  accountSetupHint?: boolean
+  postSetupHref?: string
 }) {
   const router = useRouter()
   const [step, setStep] = useState(initialStep)
@@ -229,6 +233,11 @@ export function OnboardingWizard({
         <div className="pointer-events-none absolute right-[8%] top-0 h-20 w-px bg-vault-lime/40" />
         <div className="w-full max-w-3xl">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-vault-500">Schritt {String(step).padStart(2, '0')} / 04</p>
+          {accountSetupHint && (
+            <div className="mt-5 border-l-2 border-vault-lime bg-vault-lime/5 p-4 text-sm leading-6 text-vault-300" role="status">
+              Magic-Link Login aktiv. Nach der Einrichtung kannst du ein Passwort erstellen und dich künftig auch direkt einloggen.
+            </div>
+          )}
 
           {step === 1 && (
             <section aria-labelledby="shop-heading" className="mt-5 animate-reveal">
@@ -437,7 +446,10 @@ export function OnboardingWizard({
               </div>
               <div className="mt-8 flex flex-col gap-3 border-t border-vault-700 pt-6 sm:flex-row sm:justify-between">
                 <button type="button" className="button-secondary" onClick={() => { setResult(null); setStep(3) }}>← Zurück</button>
-                <Link href="/dashboard" className="button-primary min-w-44">Dashboard öffnen →</Link>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  {accountSetupHint && <Link href="/dashboard" className="button-secondary min-w-44">Dashboard öffnen</Link>}
+                  <Link href={postSetupHref} className="button-primary min-w-44">{accountSetupHint ? 'Passwort erstellen →' : 'Dashboard öffnen →'}</Link>
+                </div>
               </div>
             </section>
           )}
