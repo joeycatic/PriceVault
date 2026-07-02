@@ -8,12 +8,12 @@ export function DeltaBadge({ value }: { value: number | null }) {
   return (
     <span
       className={cn(
-        'inline-flex min-w-20 justify-center border px-2.5 py-1 font-mono text-xs font-bold',
+        'inline-flex min-w-20 justify-center rounded-full px-2.5 py-1 text-xs font-semibold',
         numeric === null || numeric === 0
-          ? 'border-vault-700 bg-vault-800 text-vault-300'
+          ? 'bg-vault-800 text-vault-300'
         : numeric > 0
-            ? 'border-vault-lime/25 bg-vault-lime/10 text-vault-lime'
-            : 'border-red-400/25 bg-red-400/10 text-red-300',
+            ? 'bg-emerald-100 text-emerald-800'
+            : 'bg-red-100 text-red-700',
       )}
     >
       {label}

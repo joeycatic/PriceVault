@@ -9,22 +9,33 @@ const config: Config = {
     extend: {
       colors: {
         vault: {
-          950: '#0C0E0B',
-          900: '#121510',
-          800: '#1B1F19',
-          700: '#2A3027',
-          500: '#7E8878',
-          300: '#BDC6B7',
-          100: '#EDF1E9',
-          lime: '#B4F000',
+          950: '#F1F1F1',
+          900: '#FFFFFF',
+          800: '#F7F7F7',
+          700: '#D4D4D4',
+          500: '#707070',
+          300: '#5C5C5C',
+          100: '#303030',
+          lime: '#303030',
+        },
+        merchant: {
+          canvas: '#F1F1F1',
+          surface: '#FFFFFF',
+          subtle: '#F7F7F7',
+          border: '#D4D4D4',
+          muted: '#707070',
+          ink: '#303030',
+          success: '#20845A',
+          warning: '#8A6116',
+          danger: '#B42318',
         },
       },
       boxShadow: {
-        panel: '0 24px 80px rgba(0, 0, 0, 0.28)',
-        lime: '0 0 28px rgba(180, 240, 0, 0.16)',
+        panel: '0 1px 2px rgba(26, 26, 26, 0.06)',
+        lime: '0 1px 2px rgba(26, 26, 26, 0.08)',
       },
       backgroundImage: {
-        hatch: 'repeating-linear-gradient(135deg, rgba(255,255,255,.022) 0, rgba(255,255,255,.022) 1px, transparent 1px, transparent 8px)',
+        hatch: 'none',
       },
     },
   },
@@ -32,4 +43,3 @@ const config: Config = {
 }
 
 export default config
-

@@ -10,7 +10,7 @@ type ActionResult = { ok: boolean; message: string }
 function ResultMessage({ result }: { result: ActionResult | null }) {
   if (!result) return null
   return (
-    <p className={`text-sm ${result.ok ? 'text-vault-lime' : 'text-red-300'}`} role={result.ok ? 'status' : 'alert'}>
+    <p className={`text-sm ${result.ok ? 'text-merchant-success' : 'text-red-700'}`} role={result.ok ? 'status' : 'alert'}>
       {result.message}
     </p>
   )
@@ -124,11 +124,11 @@ export function ProductImportForm({ action }: { action: (formData: FormData) => 
   return (
     <form ref={ref} onSubmit={submit} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="border border-vault-700 bg-vault-950/70 p-4">
+        <div className="rounded-lg border border-vault-700 bg-vault-950/70 p-4">
           <p className="text-sm font-semibold">CSV einfügen</p>
           <p className="mt-1 text-xs leading-5 text-vault-500">Eine Zeile pro Produkt. Unterstützt Komma, Semikolon oder Tab.</p>
         </div>
-        <div className="border border-vault-700 bg-vault-950/70 p-4">
+        <div className="rounded-lg border border-vault-700 bg-vault-950/70 p-4">
           <p className="text-sm font-semibold">CSV-Datei hochladen</p>
           <p className="mt-1 text-xs leading-5 text-vault-500">Spalten: Name, SKU, Preis. Kopfzeile ist optional.</p>
         </div>
@@ -143,7 +143,7 @@ export function ProductImportForm({ action }: { action: (formData: FormData) => 
       </label>
       <label>
         <span className="field-label">Oder CSV-Datei</span>
-        <input className="field file:mr-4 file:border-0 file:bg-vault-lime file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-vault-950" name="products_file" type="file" accept=".csv,text/csv,text/plain" />
+        <input className="field file:mr-4 file:rounded-md file:border-0 file:bg-vault-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white" name="products_file" type="file" accept=".csv,text/csv,text/plain" />
       </label>
       <ResultMessage result={result} />
       <button className="button-primary w-full sm:w-auto" disabled={pending}>

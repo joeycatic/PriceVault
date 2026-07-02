@@ -1,77 +1,110 @@
 'use client'
 
+import {
+  Activity,
+  BarChart3,
+  Bell,
+  Building2,
+  ChevronDown,
+  Gauge,
+  Menu,
+  Package,
+  Radio,
+  ShieldCheck,
+  Store,
+  Users,
+  X,
+} from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
 import { useSupabase } from '@/components/providers/SupabaseProvider'
 import { cn } from '@/lib/utils'
 
-const links = [
-  { href: '/dashboard', label: 'Preisübersicht', mark: '01', icon: 'overview' },
-  { href: '/dashboard/competitors', label: 'Mitbewerber', mark: '02', icon: 'competitors' },
-  { href: '/dashboard/company', label: 'Unternehmen', mark: '03', icon: 'company' },
-  { href: '/dashboard/products', label: 'Produkte', mark: '04', icon: 'products' },
-  { href: '/dashboard/alerts', label: 'Preisalarme', mark: '05', icon: 'alerts' },
-  { href: '/dashboard/alerts/channels', label: 'Kanäle', mark: '06', icon: 'channels' },
-  { href: '/dashboard/reports', label: 'Reports', mark: '07', icon: 'reports' },
-  { href: '/dashboard/scrapes', label: 'Scrape-Jobs', mark: '08', icon: 'scrapes' },
-  { href: '/dashboard/usage', label: 'Nutzung', mark: '09', icon: 'usage' },
-  { href: '/dashboard/admin', label: 'Support', mark: '10', icon: 'support' },
+const primaryLinks = [
+  { href: '/dashboard', label: 'Übersicht', icon: Gauge },
+  { href: '/dashboard/products', label: 'Produkte', icon: Package },
+  { href: '/dashboard/competitors', label: 'Mitbewerber', icon: Users },
+  { href: '/dashboard/company', label: 'Unternehmen', icon: Building2 },
 ]
 
-type NavIconName = (typeof links)[number]['icon']
+const monitorLinks = [
+  { href: '/dashboard/alerts', label: 'Preisalarme', icon: Bell },
+  { href: '/dashboard/alerts/channels', label: 'Kanäle', icon: Radio },
+  { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/dashboard/scrapes', label: 'Scrape-Jobs', icon: Activity },
+  { href: '/dashboard/usage', label: 'Nutzung', icon: Gauge },
+]
 
-function matchesPath(pathname: string, href: string) {
-  return pathname === href || pathname.startsWith(`${href}/`)
-}
+const supportLinks = [{ href: '/dashboard/admin', label: 'Support', icon: ShieldCheck }]
+const allLinks = [...primaryLinks, ...monitorLinks, ...supportLinks]
 
 function activeHref(pathname: string) {
-  return links
-    .filter((link) => matchesPath(pathname, link.href))
+  return allLinks
+    .filter((link) => pathname === link.href || pathname.startsWith(`${link.href}/`))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
 }
 
-function NavIcon({ name }: { name: NavIconName }) {
-  const common = {
-    className: 'h-4 w-4',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    strokeWidth: 1.8,
-    viewBox: '0 0 24 24',
-    'aria-hidden': true,
-  }
+function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  const current = activeHref(pathname)
+  const groups = [
+    { label: 'Shop', links: primaryLinks },
+    { label: 'Monitoring', links: monitorLinks },
+    { label: 'Intern', links: supportLinks },
+  ]
 
-  switch (name) {
-    case 'overview':
-      return <svg {...common}><path d="M4 13h4l2-6 4 10 2-4h4" /><path d="M4 19h16" /></svg>
-    case 'competitors':
-      return <svg {...common}><path d="M8 8a3 3 0 1 0 0 6" /><path d="M16 8a3 3 0 1 1 0 6" /><path d="M3 19c1-3 3-5 5-5" /><path d="M21 19c-1-3-3-5-5-5" /></svg>
-    case 'company':
-      return <svg {...common}><path d="M5 20V6l7-3 7 3v14" /><path d="M9 20v-5h6v5" /><path d="M9 8h.01M12 8h.01M15 8h.01M9 12h.01M12 12h.01M15 12h.01" /></svg>
-    case 'products':
-      return <svg {...common}><path d="M4 8l8-4 8 4-8 4-8-4Z" /><path d="M4 8v8l8 4 8-4V8" /><path d="M12 12v8" /></svg>
-    case 'alerts':
-      return <svg {...common}><path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 7H3s3 0 3-7" /><path d="M10 20a2 2 0 0 0 4 0" /></svg>
-    case 'channels':
-      return <svg {...common}><path d="M4 12h4" /><path d="M16 12h4" /><path d="M8 12a4 4 0 0 1 8 0" /><path d="M12 16v4" /><path d="M12 4v4" /></svg>
-    case 'reports':
-      return <svg {...common}><path d="M5 19V5h14v14H5Z" /><path d="M9 15V9" /><path d="M12 15v-4" /><path d="M15 15V7" /></svg>
-    case 'scrapes':
-      return <svg {...common}><path d="M4 7h10" /><path d="M4 12h16" /><path d="M4 17h8" /><path d="M17 6l3 3-3 3" /></svg>
-    case 'usage':
-      return <svg {...common}><path d="M4 14a8 8 0 1 1 16 0" /><path d="M12 14l4-5" /><path d="M7 18h10" /></svg>
-    case 'support':
-      return <svg {...common}><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" /><path d="M12 8v5" /><path d="M12 17h.01" /></svg>
-  }
+  return (
+    <nav className="space-y-6" aria-label="Hauptnavigation">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <p className="mb-2 px-3 text-[10px] font-semibold uppercase text-vault-500">{group.label}</p>
+          <div className="space-y-1">
+            {group.links.map((link) => {
+              const Icon = link.icon
+              const active = current === link.href
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={onNavigate}
+                  className={cn(
+                    'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition',
+                    active
+                      ? 'bg-white font-semibold text-vault-100 shadow-sm'
+                      : 'text-vault-300 hover:bg-white/65 hover:text-vault-100',
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+                  {link.label}
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
+  )
 }
 
 export function Sidebar({ shopName }: { shopName: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const { supabase } = useSupabase()
-  const currentActiveHref = activeHref(pathname)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    function close(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', close)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', close)
+      document.body.style.overflow = ''
+    }
+  }, [open])
 
   async function logout() {
     await supabase.auth.signOut()
@@ -80,51 +113,73 @@ export function Sidebar({ shopName }: { shopName: string }) {
   }
 
   return (
-    <aside className="border-b border-vault-700 bg-vault-900/95 lg:fixed lg:inset-y-0 lg:left-0 lg:z-20 lg:flex lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
-      <div className="flex h-20 items-center justify-between border-b border-vault-700 px-5 lg:h-24 lg:px-7">
+    <>
+      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-vault-700 bg-white px-4 lg:hidden">
         <Link href="/dashboard" className="flex items-center gap-3" aria-label="PriceVault Startseite">
-          <span className="grid h-9 w-9 place-items-center bg-vault-lime text-sm font-black text-vault-950 shadow-lime">PV</span>
-          <span className="font-bold tracking-tight">PriceVault</span>
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-vault-100 text-xs font-black text-white">PV</span>
+          <span className="text-sm font-bold">PriceVault</span>
         </Link>
-        <span className="font-mono text-[10px] text-vault-500">V1.0</span>
-      </div>
-
-      <nav className="no-scrollbar flex gap-2 overflow-x-auto p-3 lg:flex-1 lg:flex-col lg:gap-1.5 lg:overflow-visible lg:p-5" aria-label="Hauptnavigation">
-        {links.map((link) => {
-          const active = currentActiveHref === link.href
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={cn(
-                'group relative flex min-h-11 shrink-0 items-center gap-3 border px-3 py-2.5 text-sm font-medium text-vault-300 transition lg:w-full',
-                active
-                  ? 'border-vault-lime/35 bg-vault-lime/[0.085] text-vault-100 shadow-lime'
-                  : 'border-vault-700/45 bg-vault-950/20 hover:border-vault-500 hover:bg-vault-800/85 hover:text-vault-100',
-              )}
-            >
-              <span className={cn('grid h-7 w-7 shrink-0 place-items-center border transition', active ? 'border-vault-lime/45 bg-vault-lime/10 text-vault-lime' : 'border-vault-700 bg-vault-900 text-vault-500 group-hover:border-vault-500 group-hover:text-vault-100')}>
-                <NavIcon name={link.icon} />
-              </span>
-              <span className={cn('font-mono text-[10px] text-vault-500', active && 'text-vault-lime')}>
-                {link.mark}
-              </span>
-              <span className="whitespace-nowrap">{link.label}</span>
-            </Link>
-          )
-        })}
-      </nav>
-
-      <div className="hidden border-t border-vault-700 p-5 lg:block">
-        <p className="mb-1 truncate text-sm font-semibold">{shopName}</p>
-        <p className="mb-4 text-[10px] uppercase tracking-[0.16em] text-vault-500">Mandant aktiv</p>
-        <Link href="/onboarding" className="mb-2 flex min-h-10 items-center text-xs font-semibold text-vault-300 hover:text-vault-lime">
-          Einrichtung öffnen →
-        </Link>
-        <button onClick={logout} className="button-secondary w-full" type="button">
-          Abmelden
+        <button
+          type="button"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-vault-700 bg-white"
+          onClick={() => setOpen(true)}
+          aria-label="Navigation öffnen"
+          aria-expanded={open}
+        >
+          <Menu className="h-5 w-5" aria-hidden="true" />
         </button>
-      </div>
-    </aside>
+      </header>
+
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-vault-700 bg-[#ebebeb] lg:flex">
+        <div className="flex h-16 items-center border-b border-vault-700 px-5">
+          <Link href="/dashboard" className="flex items-center gap-3" aria-label="PriceVault Startseite">
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-vault-100 text-xs font-black text-white">PV</span>
+            <span className="font-bold">PriceVault</span>
+          </Link>
+        </div>
+        <button type="button" className="mx-3 mt-3 flex min-h-11 items-center gap-3 rounded-lg px-3 text-left hover:bg-white/70">
+          <Store className="h-4 w-4" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{shopName}</span>
+          <ChevronDown className="h-4 w-4 text-vault-500" aria-hidden="true" />
+        </button>
+        <div className="no-scrollbar flex-1 overflow-y-auto px-3 py-5">
+          <NavigationLinks pathname={pathname} />
+        </div>
+        <div className="border-t border-vault-700 p-3">
+          <Link href="/onboarding" className="flex min-h-10 items-center rounded-lg px-3 text-sm text-vault-300 hover:bg-white/70 hover:text-vault-100">
+            Einrichtung öffnen
+          </Link>
+          <button onClick={logout} className="mt-1 flex min-h-10 w-full items-center rounded-lg px-3 text-sm text-vault-300 hover:bg-white/70 hover:text-vault-100" type="button">
+            Abmelden
+          </button>
+        </div>
+      </aside>
+
+      {open && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+          <button className="absolute inset-0 bg-black/25" type="button" onClick={() => setOpen(false)} aria-label="Navigation schließen" />
+          <aside className="relative flex h-full w-[min(88vw,340px)] flex-col border-r border-vault-700 bg-[#ebebeb] shadow-2xl">
+            <div className="flex h-16 items-center justify-between border-b border-vault-700 px-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-vault-100 text-xs font-black text-white">PV</span>
+                <span className="truncate text-sm font-semibold">{shopName}</span>
+              </div>
+              <button type="button" className="grid h-10 w-10 place-items-center rounded-lg" onClick={() => setOpen(false)} aria-label="Navigation schließen">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="no-scrollbar flex-1 overflow-y-auto px-3 py-5">
+              <NavigationLinks pathname={pathname} onNavigate={() => setOpen(false)} />
+            </div>
+            <div className="border-t border-vault-700 p-4 text-sm text-vault-300">
+              <Link href="/dashboard/account" onClick={() => setOpen(false)} className="block py-2">Mein Konto</Link>
+              <Link href="/dashboard/settings" onClick={() => setOpen(false)} className="block py-2">Einstellungen</Link>
+              <Link href="/dashboard/wiki" onClick={() => setOpen(false)} className="block py-2">Referenz</Link>
+              <button onClick={logout} className="mt-2 w-full rounded-lg border border-vault-700 bg-white px-4 py-2.5 text-left font-semibold">Abmelden</button>
+            </div>
+          </aside>
+        </div>
+      )}
+    </>
   )
 }

@@ -5,7 +5,7 @@ export default function NotificationSettingsPage() {
     <CategoryPage
       eyebrow="Settings / Notifications"
       title="Notifications"
-      description="Alert-Kanaele und Standardvorgaben fuer Preisalarme."
+      description="Alert-Kanäle und Standardvorgaben für Preisalarme."
       items={[
         { label: 'E-Mail', value: 'aktivierbar' },
         { label: 'Slack', value: 'Pro' },

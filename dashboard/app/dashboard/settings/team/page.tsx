@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache'
 
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { hasPlan, planLimit } from '@/lib/plan-gates'
 
@@ -45,15 +46,13 @@ export default async function TeamPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Agency</p>
-        <h1 className="mt-3 text-3xl font-bold sm:text-4xl">Team</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Lade weitere Personen in deinen PriceVault-Mandanten ein. Dein aktuelles Sitzlimit: {limits.seats}.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Agency"
+        title="Team"
+        description={<>Lade weitere Personen in deinen PriceVault-Mandanten ein. Dein aktuelles Sitzlimit: {limits.seats}.</>}
+      />
       {!canManageTeam && (
-        <div className="panel mb-6 border-l-2 border-l-vault-lime p-5 text-sm text-vault-300">
+        <div className="panel mb-6 border-l-2 border-l-merchant-success p-5 text-sm text-vault-300">
           Teamverwaltung ist im Agency-Plan verfügbar.
         </div>
       )}
@@ -87,7 +86,7 @@ export default async function TeamPage() {
               {canManageTeam && (
                 <form action={removeMember}>
                   <input type="hidden" name="user_id" value={member.user_id} />
-                  <button className="text-xs font-semibold text-red-300">Entfernen</button>
+                  <button className="text-xs font-semibold text-red-700">Entfernen</button>
                 </form>
               )}
             </article>

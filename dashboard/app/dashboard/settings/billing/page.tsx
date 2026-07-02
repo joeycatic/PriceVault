@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { planLimit } from '@/lib/plan-gates'
 
@@ -41,13 +42,11 @@ export default async function BillingPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Abrechnung</p>
-        <h1 className="mt-3 text-3xl font-bold sm:text-4xl">Plan verwalten</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Wechsle über Viva Smart Checkout auf Pro oder Agency und verwalte dein Abonnement.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Abrechnung"
+        title="Plan verwalten"
+        description="Wechsle über Viva Smart Checkout auf Pro oder Agency und verwalte dein Abonnement."
+      />
 
       <div className="grid gap-5 lg:grid-cols-3">
         {plans.map((plan) => (
@@ -57,7 +56,7 @@ export default async function BillingPage() {
                 <p className="eyebrow">{plan.name}</p>
                 <h2 className="mt-3 text-3xl font-bold">{plan.price}</h2>
               </div>
-              {currentPlan === plan.id && <span className="border border-vault-lime/50 px-2 py-1 text-xs text-vault-lime">Aktiv</span>}
+              {currentPlan === plan.id && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-merchant-success">Aktiv</span>}
             </div>
             <div className="mt-6 space-y-2 text-sm text-vault-300">
               <p>{plan.scrapes}</p>
@@ -78,7 +77,7 @@ export default async function BillingPage() {
           <button className="button-secondary">Abonnement kündigen</button>
         </form>
       ) : !canManageBilling ? (
-        <div className="panel mt-6 border-l-2 border-l-vault-lime p-5 text-sm text-vault-300">
+        <div className="panel mt-6 border-l-2 border-l-merchant-success p-5 text-sm text-vault-300">
           Nur Owner dürfen Plan und Abrechnung verwalten.
         </div>
       ) : null}

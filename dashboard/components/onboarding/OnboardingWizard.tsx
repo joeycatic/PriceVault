@@ -42,11 +42,11 @@ function LiveVerification({
   return (
     <div className="verification-panel" aria-live="polite" aria-atomic="true">
       <div className="flex items-center justify-between gap-4 border-b border-vault-700/70 px-4 py-3">
-        <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-vault-300">
+        <span className="flex items-center gap-2 text-[10px] font-bold uppercase text-vault-300">
           <span className={`verification-pulse ${complete ? 'is-complete' : ''}`} />
           Echtzeitprüfung
         </span>
-        <span className={`font-mono text-[10px] ${complete ? 'text-vault-lime' : 'text-vault-500'}`}>
+        <span className={`font-mono text-[10px] ${complete ? 'text-merchant-success' : 'text-vault-500'}`}>
           {complete ? 'BEREIT' : 'PRÜFT'}
         </span>
       </div>
@@ -163,10 +163,10 @@ export function OnboardingWizard({
 
   const currentResult = result && (
     <p
-      className={`border-l-2 px-4 py-3 text-sm ${
+      className={`rounded-lg border px-4 py-3 text-sm ${
         result.ok
-          ? 'border-vault-lime bg-vault-lime/5 text-vault-lime'
-          : 'border-red-400 bg-red-400/5 text-red-200'
+          ? 'border-merchant-success bg-emerald-50 text-merchant-success'
+          : 'border-red-400 bg-red-400/5 text-red-800'
       }`}
       role={result.ok ? 'status' : 'alert'}
     >
@@ -175,21 +175,20 @@ export function OnboardingWizard({
   )
 
   return (
-    <div className="onboarding-shell grid min-h-screen lg:grid-cols-[360px_minmax(0,1fr)]">
-      <aside className="relative overflow-hidden border-b border-vault-700 bg-vault-900/95 p-6 sm:p-9 lg:border-b-0 lg:border-r lg:p-10">
-        <div className="absolute -left-24 bottom-4 h-64 w-64 rounded-full bg-vault-lime/5 blur-3xl" />
-        <Link href={initialShop ? '/dashboard' : '/'} className="relative flex items-center gap-3" aria-label="PriceVault">
-          <span className="grid h-10 w-10 place-items-center bg-vault-lime text-sm font-black text-vault-950 shadow-lime">PV</span>
-          <span className="font-bold tracking-tight">PriceVault</span>
+    <div className="onboarding-shell grid min-h-screen bg-vault-950 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <aside className="border-b border-vault-700 bg-[#ebebeb] p-6 sm:p-8 lg:border-b-0 lg:border-r">
+        <Link href={initialShop ? '/dashboard' : '/'} className="flex items-center gap-3" aria-label="PriceVault">
+          <span className="grid h-10 w-10 place-items-center rounded-lg bg-vault-100 text-sm font-black text-white">PV</span>
+          <span className="font-bold">PriceVault</span>
         </Link>
 
-        <div className="relative mt-12 hidden lg:block">
+        <div className="mt-10 hidden lg:block">
           <p className="eyebrow">Einrichtung</p>
-          <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em]">In wenigen Schritten zum Marktüberblick.</h1>
+          <h1 className="mt-2 text-2xl font-bold">In wenigen Schritten zum Marktüberblick.</h1>
           <p className="mt-4 text-sm leading-6 text-vault-300">Deine Angaben bleiben jederzeit im Dashboard bearbeitbar.</p>
         </div>
 
-        <ol className="relative mt-8 grid grid-cols-4 gap-2 lg:mt-14 lg:grid-cols-1 lg:gap-1" aria-label="Fortschritt">
+        <ol className="mt-8 grid grid-cols-4 gap-2 lg:mt-12 lg:grid-cols-1 lg:gap-1" aria-label="Fortschritt">
           {steps.map((item) => {
             const active = step === item.number
             const complete = step > item.number
@@ -201,14 +200,14 @@ export function OnboardingWizard({
                   disabled={item.number > step}
                   className={`onboarding-step flex w-full items-center gap-3 border px-3 py-3 text-left transition lg:px-4 ${
                     active
-                      ? 'is-active border-vault-lime/40 bg-vault-lime/10'
+                      ? 'is-active border-vault-700 bg-white shadow-sm'
                       : complete
-                        ? 'is-complete border-transparent text-vault-100 hover:border-vault-700 hover:bg-vault-800'
+                        ? 'is-complete border-transparent text-vault-100 hover:bg-white/70'
                         : 'border-transparent text-vault-500'
                   }`}
                   aria-current={active ? 'step' : undefined}
                 >
-                  <span className={`onboarding-step-mark grid h-7 w-7 shrink-0 place-items-center border font-mono text-[10px] ${complete || active ? 'border-vault-lime text-vault-lime' : 'border-vault-700'}`}>
+                  <span className={`onboarding-step-mark grid h-7 w-7 shrink-0 place-items-center rounded-md border text-[10px] ${complete || active ? 'border-vault-100 bg-vault-100 text-white' : 'border-vault-700'}`}>
                     {complete ? '✓' : `0${item.number}`}
                   </span>
                   <span className="hidden min-w-0 lg:block">
@@ -221,20 +220,15 @@ export function OnboardingWizard({
           })}
         </ol>
 
-        <p className="relative mt-8 hidden font-mono text-[10px] text-vault-500 lg:block">ANGEMELDET ALS<br />{email}</p>
+        <p className="mt-8 hidden text-xs text-vault-500 lg:block">Angemeldet als<br /><span className="font-medium text-vault-300">{email}</span></p>
       </aside>
 
-      <main className="relative flex items-center px-5 py-12 sm:px-10 lg:px-16 xl:px-24">
-        <div
-          className="absolute left-0 top-0 h-0.5 bg-vault-lime shadow-[0_0_12px_rgba(180,240,0,.55)] transition-[width] duration-500 ease-out"
-          style={{ width: `${step * 25}%` }}
-          aria-hidden="true"
-        />
-        <div className="pointer-events-none absolute right-[8%] top-0 h-20 w-px bg-vault-lime/40" />
+      <main className="flex items-center px-5 py-10 sm:px-10 lg:px-14 xl:px-20">
         <div className="w-full max-w-3xl">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-vault-500">Schritt {String(step).padStart(2, '0')} / 04</p>
+          <div className="mb-7 h-1 overflow-hidden rounded-full bg-vault-700" aria-hidden="true"><div className="h-full rounded-full bg-vault-100 transition-[width] duration-500" style={{ width: `${step * 25}%` }} /></div>
+          <p className="text-xs font-semibold text-vault-500">Schritt {step} von 4</p>
           {accountSetupHint && (
-            <div className="mt-5 border-l-2 border-vault-lime bg-vault-lime/5 p-4 text-sm leading-6 text-vault-300" role="status">
+            <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-vault-300" role="status">
               Magic-Link Login aktiv. Nach der Einrichtung kannst du ein Passwort erstellen und dich künftig auch direkt einloggen.
             </div>
           )}
@@ -242,7 +236,7 @@ export function OnboardingWizard({
           {step === 1 && (
             <section aria-labelledby="shop-heading" className="mt-5 animate-reveal">
               <p className="eyebrow">Arbeitsbereich</p>
-              <h2 id="shop-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Welchen Shop beobachtest du?</h2>
+              <h2 id="shop-heading" className="mt-3 text-2xl font-bold sm:text-3xl">Welchen Shop beobachtest du?</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">Damit ordnen wir alle Produkte, Mitbewerber und Preisalarme eindeutig deinem Unternehmen zu.</p>
               <form
                 onSubmit={submitShop}
@@ -294,7 +288,7 @@ export function OnboardingWizard({
           {step === 2 && (
             <section aria-labelledby="product-heading" className="mt-5 animate-reveal">
               <p className="eyebrow">Dein Sortiment</p>
-              <h2 id="product-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Lege dein erstes Produkt an.</h2>
+              <h2 id="product-heading" className="mt-3 text-2xl font-bold sm:text-3xl">Lege dein erstes Produkt an.</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">Der eigene Preis ist die Referenz für Abweichungen und spätere Alarme.</p>
               <form
                 onSubmit={submitProduct}
@@ -349,7 +343,7 @@ export function OnboardingWizard({
           {step === 3 && (
             <section aria-labelledby="source-heading" className="mt-5 animate-reveal">
               <p className="eyebrow">Marktquelle</p>
-              <h2 id="source-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Verbinde einen Mitbewerber.</h2>
+              <h2 id="source-heading" className="mt-3 text-2xl font-bold sm:text-3xl">Verbinde einen Mitbewerber.</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">PriceVault ruft die Produktseite regelmäßig ab und stellt den gefundenen Preis deiner Referenz gegenüber.</p>
               <form
                 onSubmit={submitSource}
@@ -367,7 +361,7 @@ export function OnboardingWizard({
                     <p className="min-w-0 truncate text-sm font-semibold text-vault-100">
                       {selectedProduct?.name ?? 'Erstes Produkt'}
                     </p>
-                    <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-vault-lime">
+                    <span className="shrink-0 font-mono text-[10px] uppercase text-merchant-success">
                       übernommen
                     </span>
                   </div>
@@ -428,9 +422,9 @@ export function OnboardingWizard({
 
           {step === 4 && (
             <section aria-labelledby="done-heading" className="mt-5 animate-reveal">
-              <div className="onboarding-success-mark grid h-14 w-14 place-items-center border border-vault-lime bg-vault-lime/10 text-2xl text-vault-lime">✓</div>
+              <div className="onboarding-success-mark grid h-14 w-14 place-items-center rounded-lg border border-emerald-300 bg-emerald-100 text-2xl text-merchant-success">✓</div>
               <p className="eyebrow mt-8">Einrichtung abgeschlossen</p>
-              <h2 id="done-heading" className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-5xl">Dein PriceVault ist bereit.</h2>
+              <h2 id="done-heading" className="mt-3 text-2xl font-bold sm:text-3xl">Dein PriceVault ist bereit.</h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-vault-300">Im Dashboard siehst du nach dem ersten erfolgreichen Abruf die aktuellen Preisabstände. Weitere Produkte, Quellen und Alarme kannst du jederzeit ergänzen.</p>
               <div className="panel mt-9 grid gap-px overflow-hidden bg-vault-700 sm:grid-cols-3">
                 {[
@@ -439,7 +433,7 @@ export function OnboardingWizard({
                   ['03', 'Alarme aktivieren'],
                 ].map(([mark, label]) => (
                   <div key={mark} className="onboarding-summary-card bg-vault-900 p-5">
-                    <span className="font-mono text-[10px] text-vault-lime">{mark}</span>
+                    <span className="font-mono text-[10px] text-merchant-success">{mark}</span>
                     <p className="mt-2 text-sm font-semibold">{label}</p>
                   </div>
                 ))}

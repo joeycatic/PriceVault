@@ -19,7 +19,7 @@ export function PasswordUpdateForm() {
         <span className="field-label">Passwort bestätigen</span>
         <input className="field" type="password" name="confirm_password" autoComplete="new-password" required minLength={8} placeholder="Noch einmal eingeben" />
       </label>
-      {!state.ok && <p className="text-sm text-red-300" role="alert">{state.message}</p>}
+      {!state.ok && <p className="text-sm text-red-700" role="alert">{state.message}</p>}
       <button className="button-primary w-full" disabled={pending}>
         {pending ? 'Wird gespeichert ...' : 'Passwort speichern'}
       </button>

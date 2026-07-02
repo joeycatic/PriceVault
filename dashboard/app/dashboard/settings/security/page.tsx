@@ -11,7 +11,7 @@ export default async function SecuritySettingsPage() {
       description="API-Zugriff, Rollen und sichere Integrationsoberflaechen."
       items={[
         { label: 'Rolle', value: tenant?.membership_role ?? 'owner' },
-        { label: 'API', value: tenant?.plan === 'free' ? 'Pro erforderlich' : 'verfuegbar' },
+        { label: 'API', value: tenant?.plan === 'free' ? 'Pro erforderlich' : 'verfügbar' },
         { label: 'Audit', value: 'aktiv' },
         { label: 'Secrets', value: 'verdeckt' },
       ]}

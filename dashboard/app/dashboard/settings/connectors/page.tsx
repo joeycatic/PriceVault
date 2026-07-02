@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache'
 
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { hasPlan } from '@/lib/plan-gates'
 
@@ -38,10 +39,7 @@ export default async function ConnectorsPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Import</p>
-        <h1 className="mt-3 text-3xl font-bold sm:text-4xl">Connectoren</h1>
-      </header>
+      <PageHeader eyebrow="Import" title="Connectoren" description="Shop-Verbindungen einrichten und synchronisierte Quellen überwachen." />
       {canManageIntegrations ? (
         <section className="panel p-5">
           <form action={importShopify} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
@@ -57,7 +55,7 @@ export default async function ConnectorsPage() {
           </form>
         </section>
       ) : (
-        <div className="panel border-l-2 border-l-vault-lime p-5 text-sm text-vault-300">
+        <div className="panel border-l-2 border-l-merchant-success p-5 text-sm text-vault-300">
           Connectoren können nur Owner und Admins ab dem Pro-Plan verwalten.
         </div>
       )}
@@ -67,7 +65,7 @@ export default async function ConnectorsPage() {
           {data.map((source) => (
             <article key={source.id} className="p-5">
               <h2 className="font-semibold">{source.name}</h2>
-              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-vault-500">{source.type} · {source.active ? 'aktiv' : 'inaktiv'}</p>
+              <p className="mt-1 text-xs text-vault-500">{source.type} · {source.active ? 'aktiv' : 'inaktiv'}</p>
             </article>
           ))}
         </div>

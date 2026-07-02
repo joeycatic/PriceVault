@@ -1,4 +1,5 @@
 import { backendFetch, currentTenant } from '@/lib/backend'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { formatRelativeTime } from '@/lib/utils'
 
 type AdminIssue = {
@@ -26,7 +27,7 @@ async function adminErrorMessage(response: Response) {
     backendMessage = ''
   }
 
-  if (response.status === 403) return 'Support-Konsole ist fuer dieses Konto nicht freigeschaltet.'
+  if (response.status === 403) return 'Support-Konsole ist für dieses Konto nicht freigeschaltet.'
   if (response.status === 401) return 'Deine Sitzung ist abgelaufen. Bitte neu einloggen.'
   return backendMessage || `Admin-Daten konnten nicht geladen werden (${response.status}).`
 }
@@ -50,25 +51,23 @@ export default async function AdminPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Internal / Support</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Support-Konsole</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Platform-Admin Bereich fuer Mandantenstatus, Jobs, Connectoren, Report-Laeufe und Audit-Events.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Intern / Support"
+        title="Support-Konsole"
+        description="Platform-Admin-Bereich für Mandantenstatus, Jobs, Connectoren, Report-Läufe und Audit-Events."
+      />
 
       {error ? (
-        <section className="panel border-l-2 border-l-amber-300 p-6 text-sm text-amber-100">{error}</section>
+        <section className="panel border-l-2 border-l-amber-300 p-6 text-sm text-amber-800">{error}</section>
       ) : (
         <>
           {overview?.access_issues?.length ? (
-            <section className="panel mb-6 border-l-2 border-l-amber-300 p-5 text-sm text-amber-100">
-              <p className="font-semibold">Einige Support-Daten sind im aktuellen Schema nicht verfuegbar.</p>
+            <section className="panel mb-6 border-l-2 border-l-amber-300 p-5 text-sm text-amber-800">
+              <p className="font-semibold">Einige Support-Daten sind im aktuellen Schema nicht verfügbar.</p>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {overview.access_issues.map((issue) => (
-                  <div key={issue.resource} className="border border-amber-300/20 bg-amber-300/5 px-3 py-2">
-                    <span className="font-mono text-xs text-amber-200">{issue.resource}</span>
+                  <div key={issue.resource} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <span className="font-mono text-xs text-amber-800">{issue.resource}</span>
                     <p className="mt-1 text-vault-300">{issue.message}</p>
                   </div>
                 ))}
@@ -80,7 +79,7 @@ export default async function AdminPage() {
             {[
               ['Mandanten', overview?.tenants ?? []],
               ['Scrape-Jobs', overview?.scrape_jobs ?? []],
-              ['Report-Laeufe', overview?.report_runs ?? []],
+              ['Report-Läufe', overview?.report_runs ?? []],
               ['Connector-Syncs', overview?.connector_sync_runs ?? []],
               ['Audit-Events', overview?.audit_events ?? []],
             ].map(([title, rows]) => (

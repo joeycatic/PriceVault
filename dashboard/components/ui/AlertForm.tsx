@@ -80,7 +80,7 @@ export function AlertForm({
       </div>
 
       {result && (
-        <p className={`text-sm ${result.ok ? 'text-vault-lime' : 'text-red-300'}`} aria-live="polite">
+        <p className={`text-sm ${result.ok ? 'text-merchant-success' : 'text-red-700'}`} aria-live="polite">
           {result.message}
         </p>
       )}

@@ -5,11 +5,11 @@ export default function DataPrivacySettingsPage() {
     <CategoryPage
       eyebrow="Settings / Privacy"
       title="Data & Privacy"
-      description="Datenexporte, Loeschanfragen und DSGVO-Unterlagen."
+      description="Datenexporte, Löschanfragen und DSGVO-Unterlagen."
       items={[
         { label: 'Export', value: 'CSV/PDF' },
-        { label: 'Loeschen', value: 'Request' },
-        { label: 'DPA', value: 'verfuegbar' },
+        { label: 'Löschen', value: 'Anfrage' },
+        { label: 'DPA', value: 'verfügbar' },
         { label: 'Kontakt', value: 'DSGVO' },
       ]}
       links={[

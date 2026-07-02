@@ -73,45 +73,42 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="relative grid min-h-screen place-items-center overflow-hidden px-5 py-12">
-      <div className="pointer-events-none absolute inset-y-0 left-[7%] w-px bg-vault-700/60" />
-      <div className="pointer-events-none absolute left-[7%] top-16 h-16 w-1 bg-vault-lime" />
-      <section className="panel relative w-full max-w-md p-7 sm:p-10">
-        <div className="absolute right-0 top-0 h-2 w-20 bg-vault-lime" />
+    <main className="grid min-h-screen place-items-center bg-vault-950 px-5 py-12">
+      <section className="panel w-full max-w-md p-7 sm:p-10">
         <div className="mb-10 flex items-center justify-between gap-3">
           <Link href="/" className="flex items-center gap-3" aria-label="PriceVault Start">
-            <span className="grid h-9 w-9 place-items-center bg-vault-lime font-black text-vault-950">PV</span>
-            <span className="text-lg font-bold tracking-tight">PriceVault</span>
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-vault-100 font-black text-white">PV</span>
+            <span className="text-lg font-bold">PriceVault</span>
           </Link>
-          <Link href="/login" className="text-xs font-semibold text-vault-lime hover:underline">
+          <Link href="/login" className="text-xs font-semibold text-vault-100 hover:underline">
             Einloggen
           </Link>
         </div>
 
-        <p className="eyebrow">Account Registrierung</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.03em]">Konto erstellen</h1>
+        <p className="eyebrow">Nutzerkonto</p>
+        <h1 className="mt-3 text-3xl font-bold">Konto erstellen</h1>
         <p className="mt-3 max-w-sm text-sm leading-6 text-vault-300">
           Erstelle dein Nutzerkonto. Danach richtest du Shop, Produkte und Preisquellen ein.
         </p>
 
         {status === 'sent' || status === 'resending' ? (
-          <div className="mt-8 border-l-2 border-vault-lime bg-vault-lime/5 p-5" aria-live="polite">
+          <div className="mt-8 rounded-lg border border-emerald-200 bg-emerald-50 p-5" aria-live="polite">
             <p className="font-semibold">E-Mail bestätigen</p>
             <p className="mt-1 text-sm leading-6 text-vault-300">
               Wenn die Adresse neu ist, wurde ein Bestätigungslink an {email} gesendet.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold">
-              <button type="button" className="text-vault-lime hover:underline" onClick={resendConfirmation} disabled={status === 'resending'}>
+              <button type="button" className="text-merchant-success hover:underline" onClick={resendConfirmation} disabled={status === 'resending'}>
                 {status === 'resending' ? 'Wird erneut gesendet ...' : 'Link erneut senden'}
               </button>
-              <Link href="/login" className="text-vault-lime hover:underline">
+              <Link href="/login" className="text-merchant-success hover:underline">
                 Zum Login
               </Link>
-              <Link href="/reset-password" className="text-vault-lime hover:underline">
+              <Link href="/reset-password" className="text-merchant-success hover:underline">
                 Passwort zurücksetzen
               </Link>
             </div>
-            {error && <p className="mt-3 text-sm text-red-300" role="alert">{error}</p>}
+            {error && <p className="mt-3 text-sm text-red-700" role="alert">{error}</p>}
           </div>
         ) : (
           <form onSubmit={submit} className="mt-8 space-y-5">
@@ -131,7 +128,7 @@ export default function SignupPage() {
               <span className="field-label">Passwort bestätigen</span>
               <input className="field" type="password" autoComplete="new-password" required minLength={8} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Noch einmal eingeben" />
             </label>
-            {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
+            {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
             <button className="button-primary w-full" disabled={status === 'creating'}>
               {status === 'creating' ? 'Konto wird erstellt ...' : 'Registrieren'}
             </button>

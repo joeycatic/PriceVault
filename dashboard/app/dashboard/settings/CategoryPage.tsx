@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { currentTenant } from '@/lib/backend'
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 
 type SettingItem = {
   label: string
@@ -29,29 +30,18 @@ export async function CategoryPage({
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">{eyebrow}</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">{title}</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">{description}</p>
-      </header>
+      <PageHeader eyebrow={eyebrow} title={title} description={description} />
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {items.map((item) => (
-          <div key={item.label} className="border border-vault-700 bg-vault-900/70 px-5 py-4">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{item.label}</p>
-            <p className="mt-2 truncate font-mono text-xl font-bold">{item.value}</p>
-          </div>
-        ))}
-      </section>
+      <div className="mb-6"><MetricGrid items={items.map((item) => ({ label: item.label, value: item.value }))} /></div>
 
       <section className="panel p-5">
-        <h2 className="text-base font-semibold">Verknuepfte Bereiche</h2>
+        <h2 className="text-base font-semibold">Verknüpfte Bereiche</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {links.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="border border-vault-800 bg-vault-950 px-4 py-3 text-sm font-semibold text-vault-100 transition hover:border-vault-lime/40 hover:bg-vault-800"
+              className="rounded-lg border border-vault-700 bg-white px-4 py-3 text-sm font-semibold text-vault-100 transition hover:bg-vault-800"
             >
               {link.label}
             </Link>

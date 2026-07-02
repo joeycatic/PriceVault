@@ -9,11 +9,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!tenant) redirect('/onboarding')
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-vault-950 text-vault-100" data-dashboard-shell>
       <Sidebar shopName={tenant.shop_name} />
       <DashboardTopbar />
-      <main id="main" className="px-4 pb-7 sm:px-7 lg:ml-64 lg:px-10 lg:pb-10 xl:px-14">
-        <div className="mx-auto max-w-[1500px]">{children}</div>
+      <main id="main" className="px-4 pb-8 pt-6 sm:px-6 lg:ml-60 lg:px-8 lg:pt-0 xl:px-10">
+        <div className="mx-auto max-w-[1280px]">{children}</div>
       </main>
     </div>
   )

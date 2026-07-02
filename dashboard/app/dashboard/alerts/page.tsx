@@ -1,6 +1,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { AlertForm } from '@/components/ui/AlertForm'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
@@ -71,14 +72,14 @@ export default async function AlertsPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Benachrichtigungen</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Preisalarme</h1>
-        <p className="mt-2 text-sm text-vault-300">Reagiere, sobald ein Mitbewerber deine festgelegte Preisschwelle überschreitet.</p>
-      </header>
+      <PageHeader
+        eyebrow="Benachrichtigungen"
+        title="Preisalarme"
+        description="Reagiere, sobald ein Mitbewerber deine festgelegte Preisschwelle überschreitet."
+      />
 
       {!tenant ? (
-        <div className="panel p-6 text-sm text-amber-100">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
+        <div className="panel p-6 text-sm text-amber-800">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(380px,.85fr)_minmax(0,1.15fr)]">
           <section className="panel p-5 sm:p-6" aria-labelledby="new-alert">
@@ -103,7 +104,7 @@ export default async function AlertsPage() {
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${alert.active ? 'bg-vault-lime' : 'bg-vault-500'}`} />
+                        <span className={`h-2 w-2 rounded-full ${alert.active ? 'bg-merchant-success' : 'bg-vault-500'}`} />
                         <h3 className="font-semibold">{conditionLabels[alert.condition]}</h3>
                       </div>
                       <p className="mt-2 text-sm text-vault-300">
@@ -115,11 +116,11 @@ export default async function AlertsPage() {
                     </div>
                     <form action={deleteAlert}>
                       <input type="hidden" name="id" value={alert.id} />
-                      <button className="text-xs font-semibold text-red-300 hover:text-red-200">Löschen</button>
+                      <button className="text-xs font-semibold text-red-700 hover:text-red-800">Löschen</button>
                     </form>
                   </div>
                   <details className="mt-4 border-t border-vault-700 pt-4">
-                    <summary className="cursor-pointer text-xs font-semibold text-vault-300 hover:text-vault-lime">Regel bearbeiten</summary>
+                    <summary className="cursor-pointer text-xs font-semibold text-vault-300 hover:text-merchant-success">Regel bearbeiten</summary>
                     <div className="mt-5">
                       <AlertForm alert={alert} products={products} competitors={competitors} saveAction={saveAction} />
                     </div>

@@ -1,6 +1,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { MutationButton } from '@/components/ui/MutationButton'
 import { MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
@@ -208,17 +209,14 @@ export default async function ProductsPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Katalog / Preisquellen</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Produkte</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Pflege deine eigenen Produkte, importiere größere Listen und verbinde sie mit den Produktseiten deiner Mitbewerber.
-          Dein Unternehmensprofil liegt jetzt im eigenen Bereich.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Katalog / Preisquellen"
+        title="Produkte"
+        description="Pflege deine eigenen Produkte, importiere größere Listen und verbinde sie mit den Produktseiten deiner Mitbewerber."
+      />
 
       {!tenant ? (
-        <div className="panel p-6 text-sm text-amber-100">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
+        <div className="panel p-6 text-sm text-amber-800">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="space-y-6">
           <section className="panel p-5 sm:p-6" aria-labelledby="scrape-clarity">
@@ -290,7 +288,7 @@ export default async function ProductsPage() {
             {mappings.length ? (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="bg-vault-800/70 text-[10px] uppercase tracking-[0.14em] text-vault-500">
+                  <thead className="bg-vault-800/70 text-[10px] uppercase text-vault-500">
                     <tr>
                       <th className="px-5 py-4">Produkt</th>
                       <th className="px-4 py-4">Eigener Preis</th>
@@ -312,7 +310,7 @@ export default async function ProductsPage() {
                           <td className="px-4 py-4">{mapping.competitors?.shop_name ?? 'Unbekannt'}</td>
                           <td className="px-4 py-4 text-xs text-vault-300">
                             {latest?.scraped_at ? formatRelativeTime(latest.scraped_at) : 'Noch nie'}
-                            {latest?.scrape_ok === false && <span className="mt-1 block text-red-300">Fehlgeschlagen</span>}
+                            {latest?.scrape_ok === false && <span className="mt-1 block text-red-700">Fehlgeschlagen</span>}
                           </td>
                           <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(latest?.competitor_price ?? null)}</td>
                           <td className="max-w-xs truncate px-4 py-4 font-mono text-xs text-vault-500">{mapping.competitor_url}</td>

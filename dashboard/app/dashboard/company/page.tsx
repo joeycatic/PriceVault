@@ -1,6 +1,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { CompanyForm } from '@/components/ui/ProductForms'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 import type { LatestPrice } from '@/lib/types'
@@ -60,16 +61,14 @@ export default async function CompanyPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Unternehmensbasis</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Dein Unternehmen</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Diese Daten definieren deinen Mandanten, deinen eigenen Shop und die Referenz für Produktpreise und Wettbewerbsvergleiche.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Unternehmensbasis"
+        title="Dein Unternehmen"
+        description="Diese Daten definieren deinen Mandanten, deinen eigenen Shop und die Referenz für Produktpreise und Wettbewerbsvergleiche."
+      />
 
       {!tenant ? (
-        <div className="panel p-6 text-sm text-amber-100">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
+        <div className="panel p-6 text-sm text-amber-800">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="panel p-5 sm:p-6" aria-labelledby="company-profile">
@@ -81,7 +80,7 @@ export default async function CompanyPage() {
             {canEditCompany ? (
               <CompanyForm action={updateCompany} shopName={tenant.shop_name} shopUrl={tenant.shop_url} />
             ) : (
-              <div className="mt-5 border-l-2 border-l-vault-lime bg-vault-950 p-4 text-sm text-vault-300">
+              <div className="mt-5 rounded-lg border border-vault-700 bg-vault-800 p-4 text-sm text-vault-300">
                 Nur Owner dürfen das Unternehmensprofil bearbeiten.
               </div>
             )}
@@ -101,15 +100,15 @@ export default async function CompanyPage() {
                   ['Plan', tenant.plan],
                 ].map(([label, value]) => (
                   <div key={label} className="bg-vault-900 px-5 py-4">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{label}</p>
+                    <p className="text-[10px] uppercase text-vault-500">{label}</p>
                     <p className="mt-1 font-mono text-lg font-semibold">{value}</p>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section className="border border-vault-lime/30 bg-vault-lime/10 p-5" aria-labelledby="company-next">
-              <p className="eyebrow text-vault-lime">Nächster sinnvoller Schritt</p>
+            <section className="border border-merchant-success/30 bg-emerald-100 p-5" aria-labelledby="company-next">
+              <p className="eyebrow text-merchant-success">Nächster sinnvoller Schritt</p>
               <h2 id="company-next" className="mt-2 font-semibold">Katalog und Preisquellen getrennt pflegen</h2>
               <p className="mt-2 text-sm leading-6 text-vault-300">
                 Produkte und Importe liegen im Bereich Produkte. Scraping-Abläufe, API und Fehlerbehebung stehen dauerhaft im Wiki.

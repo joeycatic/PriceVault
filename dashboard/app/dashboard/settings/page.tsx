@@ -1,50 +1,39 @@
 import Link from 'next/link'
+import { Bell, Building2, CreditCard, Database, Plug, Settings2, Shield, Users } from 'lucide-react'
 
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 
 export default async function SettingsPage() {
   const tenant = await currentTenant()
   const sections = [
-    ['General', 'Zeitzone, Sprache, Waehrung und Standard-Scrape-Frequenz', '/dashboard/settings/general'],
-    ['Company', 'Shop, Rechnungsdaten, USt-ID und Unternehmensprofil', '/dashboard/settings/company'],
-    ['Billing', 'Plan, Viva-Abrechnung, Rechnungsmail und Status', '/dashboard/settings/billing'],
-    ['Notifications', 'E-Mail, Slack, Webhooks und Alert-Vorgaben', '/dashboard/settings/notifications'],
-    ['Security/API', 'API-Keys, Zugriff und Integrationsoberflaeche', '/dashboard/settings/security'],
-    ['Integrations', 'Shopify, WooCommerce, CSV und Google Merchant Feeds', '/dashboard/settings/integrations'],
-    ['Team', 'Rollen, Einladungen, Owner und Sitzlimits', '/dashboard/settings/team'],
-    ['Data & Privacy', 'Export, Loeschanfrage und DSGVO-Kontakt', '/dashboard/settings/data-privacy'],
+    { title: 'Allgemein', copy: 'Zeitzone, Sprache, Währung und Standard-Scrape-Frequenz', href: '/dashboard/settings/general', icon: Settings2 },
+    { title: 'Unternehmen', copy: 'Shop, Rechnungsdaten, USt-ID und Unternehmensprofil', href: '/dashboard/settings/company', icon: Building2 },
+    { title: 'Abrechnung', copy: 'Plan, Viva-Abrechnung, Rechnungsmail und Status', href: '/dashboard/settings/billing', icon: CreditCard },
+    { title: 'Benachrichtigungen', copy: 'E-Mail, Slack, Webhooks und Alert-Vorgaben', href: '/dashboard/settings/notifications', icon: Bell },
+    { title: 'Sicherheit & API', copy: 'API-Keys, Zugriff und Integrationsoberfläche', href: '/dashboard/settings/security', icon: Shield },
+    { title: 'Integrationen', copy: 'Shopify, WooCommerce, CSV und Google Merchant Feeds', href: '/dashboard/settings/integrations', icon: Plug },
+    { title: 'Team', copy: 'Rollen, Einladungen, Owner und Sitzlimits', href: '/dashboard/settings/team', icon: Users },
+    { title: 'Daten & Datenschutz', copy: 'Export, Löschanfrage und DSGVO-Kontakt', href: '/dashboard/settings/data-privacy', icon: Database },
   ]
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Settings / Tenant</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Einstellungen</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Zentrale Launch-Konfiguration fuer {tenant?.shop_name ?? 'deinen Mandanten'}.
-        </p>
-      </header>
+      <PageHeader eyebrow="Mandant" title="Einstellungen" description={<>Zentrale Konfiguration für {tenant?.shop_name ?? 'deinen Mandanten'}.</>} />
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ['Plan', tenant?.plan ?? '-'],
-          ['Zeitzone', tenant?.timezone ?? 'Europe/Berlin'],
-          ['Locale', tenant?.locale ?? 'de-DE'],
-          ['Waehrung', tenant?.default_currency ?? 'EUR'],
-        ].map(([label, value]) => (
-          <div key={label} className="border border-vault-700 bg-vault-900/70 px-5 py-4">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{label}</p>
-            <p className="mt-2 truncate font-mono text-xl font-bold">{value}</p>
-          </div>
-        ))}
-      </section>
+      <div className="mb-6"><MetricGrid items={[
+        { label: 'Plan', value: tenant?.plan ?? '-' },
+        { label: 'Zeitzone', value: tenant?.timezone ?? 'Europe/Berlin' },
+        { label: 'Sprache', value: tenant?.locale ?? 'de-DE' },
+        { label: 'Währung', value: tenant?.default_currency ?? 'EUR' },
+      ]} /></div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {sections.map(([title, copy, href]) => (
-          <Link key={title} href={href} className="panel block min-h-40 p-5 transition hover:border-vault-lime/40 hover:bg-vault-800/80">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">Settings</p>
-            <h2 className="mt-3 text-lg font-semibold">{title}</h2>
-            <p className="mt-3 text-sm leading-6 text-vault-300">{copy}</p>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {sections.map(({ title, copy, href, icon: Icon }) => (
+          <Link key={title} href={href} className="panel group block min-h-36 p-5 transition hover:bg-vault-800">
+            <Icon className="h-5 w-5 text-vault-500 group-hover:text-vault-100" aria-hidden="true" />
+            <h2 className="mt-4 text-base font-semibold">{title}</h2>
+            <p className="mt-2 text-sm leading-6 text-vault-500">{copy}</p>
           </Link>
         ))}
       </div>

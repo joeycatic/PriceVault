@@ -1,6 +1,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { APIKeyCreateForm } from './APIKeyCreateForm'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { hasPlan } from '@/lib/plan-gates'
 
@@ -54,16 +55,13 @@ export default async function APIKeysPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Integrationen</p>
-        <h1 className="mt-3 text-3xl font-bold sm:text-4xl">API-Keys</h1>
-      </header>
+      <PageHeader eyebrow="Integrationen" title="API-Keys" description="Zugriffsschlüssel für sichere externe Integrationen verwalten." />
       {canManageIntegrations ? (
         <section className="panel p-5">
           <APIKeyCreateForm action={createKey} />
         </section>
       ) : (
-        <div className="panel border-l-2 border-l-vault-lime p-5 text-sm text-vault-300">
+        <div className="panel border-l-2 border-l-merchant-success p-5 text-sm text-vault-300">
           API-Keys können nur Owner und Admins ab dem Pro-Plan verwalten.
         </div>
       )}
@@ -79,7 +77,7 @@ export default async function APIKeysPage() {
               {!key.revoked && canManageIntegrations && (
                 <form action={revokeKey}>
                   <input type="hidden" name="id" value={key.id} />
-                  <button className="text-xs font-semibold text-red-300">Widerrufen</button>
+                  <button className="text-xs font-semibold text-red-700">Widerrufen</button>
                 </form>
               )}
             </article>

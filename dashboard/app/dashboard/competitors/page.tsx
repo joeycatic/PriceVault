@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 import type { Competitor } from '@/lib/types'
@@ -80,11 +81,7 @@ export default async function CompetitorsPage() {
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Quellenverwaltung</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Mitbewerber</h1>
-        <p className="mt-2 text-sm text-vault-300">Shops und deren Preis-Selektoren verwalten.</p>
-      </header>
+      <PageHeader eyebrow="Quellenverwaltung" title="Mitbewerber" description="Shops und deren Preis-Selektoren verwalten." />
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(380px,.8fr)]">
         <section className="panel overflow-hidden" aria-labelledby="competitor-list">
@@ -97,7 +94,7 @@ export default async function CompetitorsPage() {
                 <article key={competitor.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${competitor.active ? 'bg-vault-lime' : 'bg-vault-500'}`} />
+                      <span className={`h-2 w-2 rounded-full ${competitor.active ? 'bg-merchant-success' : 'bg-vault-500'}`} />
                       <h3 className="truncate font-semibold">{competitor.shop_name}</h3>
                     </div>
                     <p className="mt-1 truncate font-mono text-xs text-vault-500">{competitor.base_url}</p>
@@ -108,7 +105,7 @@ export default async function CompetitorsPage() {
                     {competitor.active && (
                       <form action={remove}>
                         <input type="hidden" name="id" value={competitor.id} />
-                        <button className="button-secondary text-red-200">Deaktivieren</button>
+                        <button className="button-secondary text-red-800">Deaktivieren</button>
                       </form>
                     )}
                   </div>

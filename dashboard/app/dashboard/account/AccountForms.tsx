@@ -16,7 +16,7 @@ export function ProfileForm({ fullName }: { fullName: string }) {
         <span className="field-label">Name</span>
         <input className="field" name="full_name" autoComplete="name" required defaultValue={fullName} />
       </label>
-      {state.message && <p className={state.ok ? 'mt-3 text-sm text-vault-lime' : 'mt-3 text-sm text-red-300'}>{state.message}</p>}
+      {state.message && <p className={state.ok ? 'mt-3 text-sm text-merchant-success' : 'mt-3 text-sm text-red-700'}>{state.message}</p>}
       <button className="button-primary mt-5" disabled={pending}>
         {pending ? 'Speichert ...' : 'Profil speichern'}
       </button>
@@ -43,7 +43,7 @@ export function PasswordForm() {
           <input className="field" type="password" name="confirm_password" autoComplete="new-password" required minLength={8} />
         </label>
       </div>
-      {state.message && <p className={state.ok ? 'mt-3 text-sm text-vault-lime' : 'mt-3 text-sm text-red-300'}>{state.message}</p>}
+      {state.message && <p className={state.ok ? 'mt-3 text-sm text-merchant-success' : 'mt-3 text-sm text-red-700'}>{state.message}</p>}
       <button className="button-primary mt-5" disabled={pending}>
         {pending ? 'Speichert ...' : 'Passwort speichern'}
       </button>

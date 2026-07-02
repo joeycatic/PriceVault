@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 
 import { currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 
 import { PasswordForm, ProfileForm, SignOutButton } from './AccountForms'
 
@@ -19,22 +20,16 @@ export default async function AccountPage({ searchParams }: { searchParams?: Pro
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <p className="eyebrow">Account / User</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">Mein Konto</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-          Login-Daten, Profil und Sitzung für dein PriceVault Nutzerkonto.
-        </p>
-      </header>
+      <PageHeader eyebrow="Nutzerkonto" title="Mein Konto" description="Login-Daten, Profil und Sitzung für dein PriceVault Nutzerkonto." />
 
       {passwordUpdated && (
-        <div className="mb-6 border-l-2 border-vault-lime bg-vault-lime/5 p-4 text-sm text-vault-100">
+        <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-vault-100">
           Passwort aktualisiert. Du bist jetzt angemeldet.
         </div>
       )}
 
       {completeAccount && (
-        <div className="mb-6 border-l-2 border-vault-lime bg-vault-lime/5 p-5">
+        <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 p-5">
           <p className="font-semibold text-vault-100">Account vervollständigen</p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
             Dein Magic-Link Login ist aktiv. Erstelle unten ein Passwort, damit du dich künftig auch mit E-Mail und Passwort anmelden kannst.
@@ -42,19 +37,12 @@ export default async function AccountPage({ searchParams }: { searchParams?: Pro
         </div>
       )}
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ['E-Mail', user.email ?? '-'],
-          ['Rolle', tenant?.membership_role ?? 'owner'],
-          ['Plan', tenant?.plan ?? '-'],
-          ['Mandant', tenant?.shop_name ?? '-'],
-        ].map(([label, value]) => (
-          <div key={label} className="border border-vault-700 bg-vault-900/70 px-5 py-4">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-vault-500">{label}</p>
-            <p className="mt-2 truncate font-mono text-xl font-bold">{value}</p>
-          </div>
-        ))}
-      </section>
+      <div className="mb-6"><MetricGrid items={[
+        { label: 'E-Mail', value: user.email ?? '-' },
+        { label: 'Rolle', value: tenant?.membership_role ?? 'owner' },
+        { label: 'Plan', value: tenant?.plan ?? '-' },
+        { label: 'Mandant', value: tenant?.shop_name ?? '-' },
+      ]} /></div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">

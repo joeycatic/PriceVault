@@ -8,7 +8,7 @@ export default async function GeneralSettingsPage() {
     <CategoryPage
       eyebrow="Settings / General"
       title="General"
-      description="Basisvorgaben fuer Sprache, Zeitzone, Waehrung und Scrape-Frequenz."
+      description="Basisvorgaben für Sprache, Zeitzone, Währung und Scrape-Frequenz."
       items={[
         { label: 'Zeitzone', value: tenant?.timezone ?? 'Europe/Berlin' },
         { label: 'Locale', value: tenant?.locale ?? 'de-DE' },

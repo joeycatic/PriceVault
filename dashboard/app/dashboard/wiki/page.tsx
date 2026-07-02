@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 
+import { PageHeader } from '@/components/ui/MerchantUI'
+
 const scrapeRunBody = `{
   "tenant_id": "<tenant-id>",
   "competitor_product_ids": null
@@ -84,14 +86,14 @@ const quickLinks = [
 
 function FoldableChapter({ chapter, children }: { chapter: (typeof chapters)[number], children?: ReactNode }) {
   return (
-    <details id={chapter.id} className="group border border-vault-700 bg-vault-900/80 open:border-vault-lime/35 open:bg-vault-lime/[0.035]" open={chapter.id === 'setup'}>
+    <details id={chapter.id} className="group overflow-hidden rounded-lg border border-vault-700 bg-white open:border-merchant-success/35 open:bg-vault-800" open={chapter.id === 'setup'}>
       <summary className="grid cursor-pointer list-none gap-4 px-4 py-4 transition hover:bg-vault-800/70 sm:grid-cols-[56px_minmax(0,1fr)_24px] sm:px-5">
-        <span className="font-mono text-[11px] font-bold text-vault-lime">{chapter.mark}</span>
+        <span className="font-mono text-[11px] font-bold text-merchant-success">{chapter.mark}</span>
         <span className="min-w-0">
           <span className="block font-semibold text-vault-100">{chapter.title}</span>
           <span className="mt-1 block text-sm leading-6 text-vault-400">{chapter.summary}</span>
         </span>
-        <span className="hidden h-6 w-6 place-items-center border border-vault-700 font-mono text-xs text-vault-300 transition group-open:rotate-45 group-open:border-vault-lime group-open:text-vault-lime sm:grid">
+        <span className="hidden h-6 w-6 place-items-center border border-vault-700 font-mono text-xs text-vault-300 transition group-open:rotate-45 group-open:border-merchant-success group-open:text-merchant-success sm:grid">
           +
         </span>
       </summary>
@@ -103,7 +105,7 @@ function FoldableChapter({ chapter, children }: { chapter: (typeof chapters)[num
           </div>
           <div className="grid content-start gap-2">
             {chapter.links.map(([label, href]) => (
-              <Link key={href} href={href} className="border border-vault-700 bg-vault-950/80 px-3 py-2 text-xs font-semibold text-vault-300 transition hover:border-vault-lime/40 hover:text-vault-lime">
+              <Link key={href} href={href} className="rounded-lg border border-vault-700 bg-vault-950/80 px-3 py-2 text-xs font-semibold text-vault-300 transition hover:border-merchant-success/40 hover:text-merchant-success">
                 {label} →
               </Link>
             ))}
@@ -119,25 +121,18 @@ export default function WikiPage() {
 
   return (
     <>
-      <header className="mb-8 grid gap-6 border-b border-vault-700 pb-7 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div>
-          <p className="eyebrow">Referenz</p>
-          <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">PriceVault Referenz</h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-vault-300">
-            Betriebswissen für Einrichtung, Preisquellen, Scraping, API und Fehlerbehebung. Kompakt genug für den Alltag, vollständig genug für Supportfälle.
-          </p>
-        </div>
-        <div className="border border-vault-lime/30 bg-vault-lime/10 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-vault-lime">Backend</p>
-          <p className="mt-2 break-all font-mono text-sm text-vault-100">{backendUrl}</p>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Referenz"
+        title="PriceVault Referenz"
+        description="Betriebswissen für Einrichtung, Preisquellen, Scraping, API und Fehlerbehebung. Kompakt für den Alltag und vollständig für Supportfälle."
+        actions={<div className="max-w-xs rounded-lg border border-vault-700 bg-white px-4 py-3"><p className="text-xs text-vault-500">Backend</p><p className="mt-1 break-all font-mono text-xs text-vault-100">{backendUrl}</p></div>}
+      />
 
       <div className="grid items-start gap-6 xl:grid-cols-[240px_minmax(0,1fr)_320px]">
         <aside className="sticky top-24 hidden xl:block">
           <nav className="grid gap-1 border border-vault-700 bg-vault-900/80 p-2" aria-label="Referenzindex">
             {chapters.map((chapter) => (
-              <a key={chapter.id} href={`#${chapter.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs text-vault-300 transition hover:bg-vault-800 hover:text-vault-lime">
+              <a key={chapter.id} href={`#${chapter.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs text-vault-300 transition hover:bg-vault-800 hover:text-merchant-success">
                 <span className="font-mono text-vault-500">{chapter.mark}</span>
                 <span>{chapter.title}</span>
               </a>
@@ -155,11 +150,11 @@ export default function WikiPage() {
               </div>
               <div className="grid gap-px bg-vault-700 md:grid-cols-2">
                 <div className="bg-vault-950 p-4">
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Alle aktiven Quellen</p>
+                  <p className="text-xs font-bold uppercase text-vault-500">Alle aktiven Quellen</p>
                   <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{scrapeRunBody}</code></pre>
                 </div>
                 <div className="bg-vault-950 p-4">
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-vault-500">Einzelne Quelle</p>
+                  <p className="text-xs font-bold uppercase text-vault-500">Einzelne Quelle</p>
                   <pre className="mt-3 overflow-x-auto text-xs text-vault-200"><code>{singleScrapeBody}</code></pre>
                 </div>
               </div>
@@ -176,19 +171,19 @@ export default function WikiPage() {
         </section>
 
         <aside className="space-y-4">
-          <section className="border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-quicklinks">
+          <section className="rounded-lg border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-quicklinks">
             <p className="eyebrow">Direktzugriff</p>
             <h2 id="reference-quicklinks" className="mt-2 font-semibold">Arbeitsbereiche</h2>
             <div className="mt-4 grid gap-2">
               {quickLinks.map(([label, href]) => (
-                <Link key={href} href={href} className="border border-vault-700 bg-vault-950/70 px-3 py-2 text-sm text-vault-300 transition hover:border-vault-lime/40 hover:text-vault-lime">
+                <Link key={href} href={href} className="rounded-lg border border-vault-700 bg-vault-950/70 px-3 py-2 text-sm text-vault-300 transition hover:border-merchant-success/40 hover:text-merchant-success">
                   {label} →
                 </Link>
               ))}
             </div>
           </section>
 
-          <section className="border border-vault-lime/30 bg-vault-lime/10 p-5" aria-labelledby="reference-troubleshooting">
+          <section className="border border-merchant-success/30 bg-emerald-100 p-5" aria-labelledby="reference-troubleshooting">
             <p className="eyebrow">Fehlerbehebung</p>
             <h2 id="reference-troubleshooting" className="mt-2 font-semibold">Scraping läuft nicht</h2>
             <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-vault-300">
@@ -200,7 +195,7 @@ export default function WikiPage() {
             </ol>
           </section>
 
-          <section className="border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-env">
+          <section className="rounded-lg border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-env">
             <p className="eyebrow">Betrieb</p>
             <h2 id="reference-env" className="mt-2 font-semibold">Variablen</h2>
             <dl className="mt-4 space-y-3 text-sm">

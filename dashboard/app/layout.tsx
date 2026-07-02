@@ -5,7 +5,10 @@ import { SupabaseProvider } from '@/components/providers/SupabaseProvider'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'PriceVault',
+  title: {
+    default: 'PriceVault',
+    template: '%s | PriceVault',
+  },
   description: 'Behalte den Überblick über deine Mitbewerberpreise.',
 }
 

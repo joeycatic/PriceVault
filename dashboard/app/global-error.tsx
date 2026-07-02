@@ -18,7 +18,7 @@ export default function GlobalError({
     <html lang="de">
       <body>
         <main className="grid min-h-screen place-items-center px-5 py-12">
-          <section className="w-full max-w-lg border border-vault-700 bg-vault-900 p-7 text-center sm:p-10">
+          <section className="w-full max-w-lg rounded-lg border border-vault-700 bg-white p-7 text-center shadow-panel sm:p-10">
             <p className="eyebrow">Unerwarteter Fehler</p>
             <h1 className="mt-3 text-3xl font-bold">PriceVault konnte nicht geladen werden.</h1>
             <p className="mt-3 text-sm leading-6 text-vault-300">

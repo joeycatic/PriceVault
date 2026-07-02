@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { notFound } from 'next/navigation'
 
 const concepts = [
   { href: '/design-lab/hygraph', label: '01 Hygraph' },
@@ -27,6 +28,8 @@ const concepts = [
 ]
 
 export default function DesignLabLayout({ children }: { children: React.ReactNode }) {
+  if (process.env.NODE_ENV !== 'development') notFound()
+
   return (
     <div className="min-h-screen bg-[#f4f4f2] text-[#171717]" style={{ colorScheme: 'light' }}>
       <header className="sticky top-0 z-50 border-b border-black/15 bg-[#f4f4f2]">

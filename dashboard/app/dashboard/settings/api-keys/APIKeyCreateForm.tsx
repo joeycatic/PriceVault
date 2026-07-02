@@ -30,7 +30,7 @@ export function APIKeyCreateForm({ action }: { action: (formData: FormData) => P
       {result && (
         <div
           className={`sm:col-span-2 border p-3 text-sm ${
-            result.ok ? 'border-vault-lime/40 text-vault-lime' : 'border-red-400/50 text-red-300'
+            result.ok ? 'border-merchant-success/40 text-merchant-success' : 'border-red-400/50 text-red-700'
           }`}
           role={result.ok ? 'status' : 'alert'}
         >

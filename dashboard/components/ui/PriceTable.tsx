@@ -42,7 +42,7 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
     return (
       <div className="panel grid min-h-72 place-items-center px-6 text-center">
         <div>
-          <p className="eyebrow">Noch keine Messwerte</p>
+          <p className="text-sm text-vault-500">Noch keine Messwerte</p>
           <h2 className="mt-3 text-xl font-semibold">Die Preisübersicht ist noch leer.</h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-vault-300">
             Lege Produkte und Mitbewerber-Zuordnungen an. Nach dem ersten Abruf erscheinen die
@@ -58,7 +58,7 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse text-left">
           <thead>
-            <tr className="border-b border-vault-700 bg-vault-800/70 text-[10px] uppercase tracking-[0.14em] text-vault-500">
+            <tr className="border-b border-vault-700 bg-vault-800/70 text-[10px] uppercase text-vault-500">
               <th className="px-5 py-4 font-semibold">Produkt</th>
               <th className="px-4 py-4 font-semibold">Dein Preis</th>
               <th className="px-4 py-4 font-semibold">Mitbewerber</th>
@@ -86,12 +86,12 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
                           className="flex items-center gap-3 text-left font-semibold text-vault-100"
                           aria-expanded={isOpen}
                         >
-                          <span className="grid h-6 w-6 place-items-center border border-vault-700 font-mono text-xs text-vault-lime">
+                          <span className="grid h-7 w-7 place-items-center rounded-lg border border-vault-700 bg-white text-xs text-vault-300">
                             {isOpen ? '−' : '+'}
                           </span>
                           <span>
                             {row.product_name}
-                            <span className="mt-1 block font-mono text-[10px] font-normal uppercase tracking-wider text-vault-500">
+                            <span className="mt-1 block font-mono text-[10px] font-normal uppercase text-vault-500">
                               {entries.length} {entries.length === 1 ? 'Quelle' : 'Quellen'}
                             </span>
                           </span>
@@ -124,7 +124,7 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
                             row.in_stock === null
                               ? 'bg-vault-500'
                               : row.in_stock
-                                ? 'bg-vault-lime shadow-[0_0_8px_rgba(180,240,0,.5)]'
+                                ? 'bg-merchant-success'
                                 : 'bg-red-400'
                           }`}
                         />

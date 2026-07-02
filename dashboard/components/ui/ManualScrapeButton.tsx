@@ -44,7 +44,7 @@ export function ManualScrapeButton({
       </button>
       {result && (
         <span
-          className={`block max-w-xs text-xs ${result.ok ? 'text-vault-lime' : 'text-red-300'}`}
+          className={`block max-w-xs text-xs ${result.ok ? 'text-merchant-success' : 'text-red-700'}`}
           role={result.ok ? 'status' : 'alert'}
         >
           {result.message}

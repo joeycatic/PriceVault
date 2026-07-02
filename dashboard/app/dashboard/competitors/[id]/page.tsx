@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache'
 import { notFound } from 'next/navigation'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
+import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 import type { Competitor } from '@/lib/types'
@@ -73,12 +74,12 @@ export default async function EditCompetitorPage({ params }: { params: Promise<{
 
   return (
     <>
-      <header className="mb-8 border-b border-vault-700 pb-7">
-        <Link href="/dashboard/competitors" className="text-xs text-vault-300 hover:text-vault-lime">← Zurück zu Mitbewerbern</Link>
-        <p className="eyebrow mt-6">Quellenverwaltung</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-[-0.04em] sm:text-4xl">{competitor.shop_name}</h1>
-        <p className="mt-2 text-sm text-vault-300">Shopdaten und Selektoren bearbeiten.</p>
-      </header>
+      <PageHeader
+        eyebrow="Quellenverwaltung"
+        title={competitor.shop_name}
+        description="Shopdaten und Selektoren bearbeiten."
+        actions={<Link href="/dashboard/competitors" className="button-secondary">Zurück</Link>}
+      />
       <section className="panel max-w-3xl p-5 sm:p-7">
         <CompetitorForm competitor={competitor} saveAction={saveAction} testAction={testAction} />
       </section>

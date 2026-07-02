@@ -92,19 +92,19 @@ export function CompetitorForm({
         <input className="field font-mono" name="selector_stock" defaultValue={competitor?.selector_stock ?? ''} placeholder=".stock-status" />
       </label>
 
-      <div className="border-l-2 border-amber-300 bg-amber-300/5 px-4 py-3 text-sm leading-6 text-amber-100">
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
         CSS-Selektoren können sich ändern, wenn der Shop sein Design aktualisiert. Teste den
         Selektor regelmäßig.
       </div>
 
       {testResult && (
-        <p className={`text-sm ${testResult.ok ? 'text-vault-lime' : 'text-red-300'}`} aria-live="polite">
+        <p className={`text-sm ${testResult.ok ? 'text-merchant-success' : 'text-red-700'}`} aria-live="polite">
           {testResult.message}
           {testResult.rawPriceText ? ` (${testResult.rawPriceText})` : ''}
         </p>
       )}
       {result && (
-        <p className={`text-sm ${result.ok ? 'text-vault-lime' : 'text-red-300'}`} aria-live="polite">
+        <p className={`text-sm ${result.ok ? 'text-merchant-success' : 'text-red-700'}`} aria-live="polite">
           {result.message}
         </p>
       )}
@@ -120,4 +120,3 @@ export function CompetitorForm({
     </form>
   )
 }
-
