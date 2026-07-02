@@ -21,6 +21,16 @@ const links = [
 
 type NavIconName = (typeof links)[number]['icon']
 
+function matchesPath(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`)
+}
+
+function activeHref(pathname: string) {
+  return links
+    .filter((link) => matchesPath(pathname, link.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href
+}
+
 function NavIcon({ name }: { name: NavIconName }) {
   const common = {
     className: 'h-4 w-4',
@@ -61,6 +71,7 @@ export function Sidebar({ shopName }: { shopName: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const { supabase } = useSupabase()
+  const currentActiveHref = activeHref(pathname)
 
   async function logout() {
     await supabase.auth.signOut()
@@ -80,8 +91,7 @@ export function Sidebar({ shopName }: { shopName: string }) {
 
       <nav className="no-scrollbar flex gap-2 overflow-x-auto p-3 lg:flex-1 lg:flex-col lg:gap-1.5 lg:overflow-visible lg:p-5" aria-label="Hauptnavigation">
         {links.map((link) => {
-          const active =
-            link.href === '/dashboard' ? pathname === link.href : pathname.startsWith(link.href)
+          const active = currentActiveHref === link.href
           return (
             <Link
               key={link.href}
