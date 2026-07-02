@@ -86,6 +86,79 @@ def test_openapi_contains_phase_routes():
         assert path in paths
 
 
+def test_request_context_returns_request_id_header():
+    import main
+
+    response = TestClient(main.app).get(
+        "/openapi.json",
+        headers={"X-Request-ID": "req-contract-1", "X-Tenant-ID": "tenant-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req-contract-1"
+
+
+def test_health_endpoint_checks_database_and_worker_queue(monkeypatch):
+    import main
+
+    async def fake_database():
+        return {"reachable": "true"}
+
+    async def fake_worker_queue():
+        return {
+            "queue": "arq:queue",
+            "queued_jobs": 0,
+            "max_jobs": 10,
+            "queue_saturation": 0.0,
+            "scale_hint": "idle",
+        }
+
+    monkeypatch.setattr(main, "_check_database", fake_database)
+    monkeypatch.setattr(main, "_check_worker_queue", fake_worker_queue)
+
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "checks": {
+            "database": {"status": "ok", "reachable": "true"},
+            "worker_queue": {
+                "status": "ok",
+                "queue": "arq:queue",
+                "queued_jobs": 0,
+                "max_jobs": 10,
+                "queue_saturation": 0.0,
+                "scale_hint": "idle",
+            },
+        },
+    }
+
+
+def test_health_endpoint_fails_when_a_probe_fails(monkeypatch):
+    import main
+
+    async def fake_database():
+        return {"reachable": "true"}
+
+    async def fake_worker_queue():
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(main, "_check_database", fake_database)
+    monkeypatch.setattr(main, "_check_worker_queue", fake_worker_queue)
+
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "status": "unhealthy",
+        "checks": {
+            "database": {"status": "ok", "reachable": "true"},
+            "worker_queue": {"status": "error", "error": "RuntimeError"},
+        },
+    }
+
+
 def test_tenant_routes_require_bearer_token():
     import main
 

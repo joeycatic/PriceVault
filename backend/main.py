@@ -1,15 +1,20 @@
 """PriceVault FastAPI application entry point."""
 
+import asyncio
 import os
+import time
+from uuid import uuid4
 
 import sentry_sdk
+import structlog.contextvars
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from db.client import check_supabase_admin_connection
 from jobs.worker_status import worker_autoscaling_signals
 from middleware.rate_limit import TenantPlanRateLimitMiddleware, limiter
 from routers import admin, alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, products, reports, scrape, settings, snapshots, team, webhooks
@@ -56,19 +61,52 @@ app.include_router(reports.router)
 app.include_router(admin.router)
 
 
-@app.get("/health", tags=["system"])
-async def health() -> dict[str, str]:
-    return {"status": "ok", "queue": "arq"}
+@app.middleware("http")
+async def request_logging_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    tenant_id = request.headers.get("X-Tenant-ID")
+    scrape_job_id = request.headers.get("X-Scrape-Job-ID")
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(
+        request_id=request_id,
+        tenant_id=tenant_id,
+        scrape_job_id=scrape_job_id,
+        method=request.method,
+        path=request.url.path,
+    )
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "request_failed",
+            action="request_failed",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        structlog.contextvars.clear_contextvars()
+        raise
+
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request_complete",
+        action="request_complete",
+        status_code=response.status_code,
+        user_id=getattr(request.state, "user_id", None),
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    structlog.contextvars.clear_contextvars()
+    return response
 
 
-@app.get("/health/worker", tags=["system"])
-async def worker_health() -> dict[str, float | int | str]:
+async def _check_database() -> dict[str, str]:
+    await asyncio.to_thread(check_supabase_admin_connection)
+    return {"target": "supabase"}
+
+
+async def _check_worker_queue() -> dict[str, float | int | str]:
     redis_url = os.environ.get("REDIS_URL")
     if not redis_url:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="REDIS_URL ist nicht konfiguriert",
-        )
+        raise RuntimeError("REDIS_URL is not configured")
     redis = await create_pool(RedisSettings.from_dsn(redis_url))
     try:
         return await worker_autoscaling_signals(
@@ -77,3 +115,37 @@ async def worker_health() -> dict[str, float | int | str]:
         )
     finally:
         await redis.aclose()
+
+
+@app.get("/health", tags=["system"])
+async def health() -> dict[str, object]:
+    checks: dict[str, object] = {}
+    healthy = True
+    for name, probe in (
+        ("database", _check_database),
+        ("worker_queue", _check_worker_queue),
+    ):
+        try:
+            result = await probe()
+            checks[name] = {"status": "ok", **result}
+        except Exception as exc:
+            healthy = False
+            checks[name] = {"status": "error", "error": type(exc).__name__}
+
+    if not healthy:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "unhealthy", "checks": checks},
+        )
+    return {"status": "ok", "checks": checks}
+
+
+@app.get("/health/worker", tags=["system"])
+async def worker_health() -> dict[str, float | int | str]:
+    try:
+        return await _check_worker_queue()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="REDIS_URL ist nicht konfiguriert",
+        )

@@ -55,6 +55,11 @@ def get_supabase_admin() -> Client:
     return create_client(_supabase_url(), _service_key())
 
 
+def check_supabase_admin_connection() -> None:
+    """Perform a minimal service-role query for runtime health checks."""
+    get_supabase_admin().table("tenants").select("id").limit(1).execute()
+
+
 @contextmanager
 def supabase_context(
     *, access_token: str | None = None, admin: bool = False

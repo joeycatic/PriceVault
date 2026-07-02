@@ -57,6 +57,8 @@ npm run dev
 ### Local verify
 - Backend: http://localhost:8000/docs (FastAPI auto-docs)
 - Dashboard: http://localhost:3000
+- Health: `GET /health` checks Supabase connectivity and ARQ/Redis queue visibility; `GET /health/worker` returns the queue saturation signal used by the worker service.
+- Logs are JSON via structlog. API requests include `request_id`, `tenant_id` when `X-Tenant-ID` is present, method/path/status, and duration. Scrape jobs bind `tenant_id`, `competitor_product_id`, and `scrape_job_id` when a job-history row is created.
 
 Check that the local app is reachable:
 
