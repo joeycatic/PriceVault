@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 from contextlib import suppress
+from datetime import datetime, timezone
 
 import structlog.contextvars
 
@@ -70,6 +71,13 @@ async def _scrape_target(
     rows = await queries.get_scrape_targets(tenant_id, [competitor_product_id])
     if not rows:
         error = "Aktive Preisquelle nicht gefunden"
+        with suppress(Exception):
+            await queries.mark_source_scrape_failure(
+                tenant_id,
+                competitor_product_id,
+                error,
+                failed_at=datetime.now(timezone.utc).isoformat(),
+            )
         await maybe_retry_or_dlq(
             ctx,
             tenant_id=tenant_id,
@@ -112,6 +120,13 @@ async def _scrape_target(
 
     result = await ScraperAgent().scrape(_target_from_row(rows[0]))
     if not result.scrape_ok:
+        with suppress(Exception):
+            await queries.mark_source_scrape_failure(
+                tenant_id,
+                competitor_product_id,
+                result.error_msg or "Preisabruf fehlgeschlagen",
+                failed_at=result.scraped_at.isoformat(),
+            )
         if scrape_job:
             with suppress(Exception):
                 await queries.finish_scrape_job(
@@ -129,6 +144,12 @@ async def _scrape_target(
             error=result.error_msg or "Preisabruf fehlgeschlagen",
         )
     elif evaluate_alerts:
+        with suppress(Exception):
+            await queries.mark_source_scrape_success(
+                tenant_id,
+                competitor_product_id,
+                result.scraped_at.isoformat(),
+            )
         if scrape_job:
             with suppress(Exception):
                 await queries.finish_scrape_job(
@@ -140,6 +161,12 @@ async def _scrape_target(
                 )
         await AlertAgent().run(tenant_id)
     elif scrape_job:
+        with suppress(Exception):
+            await queries.mark_source_scrape_success(
+                tenant_id,
+                competitor_product_id,
+                result.scraped_at.isoformat(),
+            )
         with suppress(Exception):
             await queries.finish_scrape_job(
                 scrape_job["id"],

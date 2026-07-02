@@ -12,9 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from agents.matcher_agent import MatchRequest, MatcherAgent
 from agents.scraper_agent import ScrapeTarget, ScraperAgent
 from auth.dependencies import get_current_tenant
+from auth.plan_guard import require_tenant_admin
 from auth.scrape_quota import release_scrape_slots, reserve_scrape_slots
 from db import queries
-from models.schemas import MatchSearchRequest, ScrapeRunRequest, ScrapeTestRequest
+from models.schemas import MatchSearchRequest, ProductMappingRepair, ScrapeRunRequest, ScrapeTestRequest
 from routers import get_tenant
 
 
@@ -109,6 +110,63 @@ async def test_scrape(body: ScrapeTestRequest, tenant_id: str = Depends(get_tena
     payload.pop("currency")
     payload.pop("scraped_at")
     return payload
+
+
+@router.post("/scrape/sources/{mapping_id}/repair")
+async def repair_source(
+    mapping_id: str,
+    body: ProductMappingRepair,
+    tenant: dict = Depends(require_tenant_admin),
+) -> dict:
+    tenant_id = tenant["id"]
+    mapping = await queries.get_product_mapping(tenant_id, mapping_id)
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Preisquelle nicht gefunden")
+    competitor = mapping.get("competitors") or {}
+    target_url = str(body.competitor_url or mapping["competitor_url"])
+    selector_price = body.selector_price if body.selector_price is not None else mapping.get("selector_price")
+    selector_stock = (
+        body.selector_stock if body.selector_stock is not None else competitor.get("selector_stock")
+    )
+    target = ScrapeTarget(
+        competitor_product_id=mapping_id,
+        url=target_url,
+        selector_price=selector_price,
+        selector_stock=selector_stock,
+        tenant_id=tenant_id,
+        competitor_id=mapping.get("competitor_id"),
+    )
+    result = await ScraperAgent().scrape(target, persist=False)
+    if not result.scrape_ok:
+        await queries.mark_source_scrape_failure(
+            tenant_id,
+            mapping_id,
+            result.error_msg or "Reparatur-Test fehlgeschlagen",
+            failed_at=result.scraped_at.isoformat(),
+        )
+        return {"repaired": False, "test": asdict(result)}
+
+    values = {
+        "competitor_url": target_url,
+        "selector_price": selector_price,
+        "health_status": "healthy",
+        "consecutive_failures": 0,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "broken_reason": None,
+        "last_successful_scrape_at": result.scraped_at.isoformat(),
+        "repaired_at": result.scraped_at.isoformat(),
+    }
+    await queries.update_product_mapping(tenant_id, mapping_id, values)
+    if body.selector_stock is not None and mapping.get("competitor_id"):
+        await queries.update_competitor(
+            tenant_id,
+            mapping["competitor_id"],
+            {"selector_stock": body.selector_stock},
+        )
+    payload = asdict(result)
+    payload["scraped_at"] = result.scraped_at.isoformat()
+    return {"repaired": True, "test": payload}
 
 
 @router.post("/match/search")

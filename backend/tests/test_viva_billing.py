@@ -112,6 +112,9 @@ def test_enqueue_due_renewals_expires_canceled_plans(monkeypatch):
                 "plan": "free",
                 "subscription_plan": None,
                 "subscription_current_period_end": None,
+                "subscription_cancel_at_period_end": False,
+                "cancellation_effective_at": None,
+                "subscription_status": "canceled",
             },
         )
     ]
@@ -145,17 +148,35 @@ def test_renewal_marks_past_due_after_final_attempt(monkeypatch):
             )
         )
 
-    assert updates == [("tenant-1", {"plan": "free", "subscription_status": "past_due"})]
+    assert updates == [
+        (
+            "tenant-1",
+            {
+                "subscription_status": "past_due",
+                "failed_payment_count": 3,
+                "last_payment_error": "declined",
+                "next_payment_retry_at": None,
+            },
+        )
+    ]
 
 
 def test_renewal_defers_provider_failure_before_final_attempt(monkeypatch):
     from arq import Retry
+    from db import queries
     from jobs import billing_tasks
 
     async def fail_payment(**_kwargs):
         raise billing_tasks.viva.VivaAPIError("temporary failure")
 
+    updates = []
+
+    async def fake_update(tenant_id, values):
+        updates.append((tenant_id, values))
+        return values
+
     monkeypatch.setattr(billing_tasks.viva, "create_recurring_payment", fail_payment)
+    monkeypatch.setattr(queries, "update_tenant", fake_update)
 
     with pytest.raises(Retry) as caught:
         asyncio.run(
@@ -170,3 +191,7 @@ def test_renewal_defers_provider_failure_before_final_attempt(monkeypatch):
         )
 
     assert caught.value.defer_score == 300_000
+    assert updates[0][0] == "tenant-1"
+    assert updates[0][1]["failed_payment_count"] == 2
+    assert updates[0][1]["last_payment_error"] == "temporary failure"
+    assert updates[0][1]["next_payment_retry_at"] is not None

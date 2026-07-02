@@ -16,14 +16,17 @@ async def enqueue_due_viva_renewals(ctx: dict) -> int:
         subscriptions = await queries.list_due_viva_subscriptions(now.isoformat())
         ended = await queries.list_ended_viva_subscriptions(now.isoformat())
         for subscription in ended:
-            await queries.update_tenant(
-                subscription["id"],
-                {
-                    "plan": "free",
-                    "subscription_plan": None,
-                    "subscription_current_period_end": None,
-                },
-            )
+                await queries.update_tenant(
+                    subscription["id"],
+                    {
+                        "plan": "free",
+                        "subscription_plan": None,
+                        "subscription_current_period_end": None,
+                        "subscription_cancel_at_period_end": False,
+                        "cancellation_effective_at": None,
+                        "subscription_status": "canceled",
+                    },
+                )
     queued = 0
     for subscription in subscriptions:
         period = str(subscription["subscription_current_period_end"])[:10]
@@ -62,13 +65,33 @@ async def renew_viva_subscription(
         raise
     except viva.VivaAPIError as exc:
         attempt = int(ctx.get("job_try", 1))
+        retry_at = None if attempt >= 3 else datetime.now(timezone.utc).timestamp() + 60 * (5 ** (attempt - 1))
+        retry_iso = (
+            datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat()
+            if retry_at
+            else None
+        )
         if attempt >= 3:
             with supabase_context(admin=True):
                 await queries.update_tenant(
                     tenant_id,
-                    {"plan": "free", "subscription_status": "past_due"},
+                    {
+                        "subscription_status": "past_due",
+                        "failed_payment_count": attempt,
+                        "last_payment_error": str(exc)[:1000],
+                        "next_payment_retry_at": None,
+                    },
                 )
             raise
+        with supabase_context(admin=True):
+            await queries.update_tenant(
+                tenant_id,
+                {
+                    "failed_payment_count": attempt,
+                    "last_payment_error": str(exc)[:1000],
+                    "next_payment_retry_at": retry_iso,
+                },
+            )
         raise Retry(defer=60 * (5 ** (attempt - 1))) from exc
 
     now = datetime.now(timezone.utc)
@@ -79,6 +102,11 @@ async def renew_viva_subscription(
                 "plan": plan,
                 "subscription_status": "active",
                 "subscription_current_period_end": next_month(now).isoformat(),
+                "subscription_cancel_at_period_end": False,
+                "cancellation_effective_at": None,
+                "failed_payment_count": 0,
+                "last_payment_error": None,
+                "next_payment_retry_at": None,
             },
         )
     return {"transaction_id": transaction_id}

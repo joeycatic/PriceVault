@@ -7,25 +7,33 @@ export async function currentTenant() {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase.from('tenants').select('*').limit(1).maybeSingle()
-  if (!data) return null
-  if (data.user_id === user.id) return { ...data, membership_role: 'owner' } as Tenant
+  const { data: tenants } = await supabase
+    .from('tenants')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (!tenants?.length) return null
 
-  const { data: membership } = await supabase
-    .from('team_members')
-    .select('role,accepted')
-    .eq('tenant_id', data.id)
-    .eq('user_id', user.id)
-    .maybeSingle()
-  if (!membership) return null
-  if (!membership.accepted) {
-    await supabase
+  const owned = tenants.find((tenant) => tenant.user_id === user.id)
+  if (owned) return { ...owned, membership_role: 'owner' } as Tenant
+
+  for (const tenant of tenants) {
+    const { data: membership } = await supabase
       .from('team_members')
-      .update({ accepted: true })
-      .eq('tenant_id', data.id)
+      .select('role,accepted')
+      .eq('tenant_id', tenant.id)
       .eq('user_id', user.id)
+      .maybeSingle()
+    if (!membership) continue
+    if (!membership.accepted) {
+      await supabase
+        .from('team_members')
+        .update({ accepted: true })
+        .eq('tenant_id', tenant.id)
+        .eq('user_id', user.id)
+    }
+    return { ...tenant, membership_role: membership.role } as Tenant
   }
-  return { ...data, membership_role: membership.role } as Tenant
+  return null
 }
 
 export function backendBaseUrl() {

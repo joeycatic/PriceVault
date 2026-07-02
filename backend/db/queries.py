@@ -59,9 +59,13 @@ async def list_due_viva_subscriptions(now: str) -> list[dict[str, Any]]:
     return await _execute(
         lambda: get_supabase()
         .table("tenants")
-        .select("id,subscription_plan,viva_initial_transaction_id,viva_source_code,subscription_current_period_end")
+        .select(
+            "id,subscription_plan,viva_initial_transaction_id,viva_source_code,"
+            "subscription_current_period_end,failed_payment_count"
+        )
         .eq("billing_provider", "viva")
         .eq("subscription_status", "active")
+        .eq("subscription_cancel_at_period_end", False)
         .lte("subscription_current_period_end", now)
     )
 
@@ -72,7 +76,11 @@ async def list_ended_viva_subscriptions(now: str) -> list[dict[str, Any]]:
         .table("tenants")
         .select("id")
         .eq("billing_provider", "viva")
-        .eq("subscription_status", "canceled")
+        .or_(
+            "subscription_status.eq.canceled,"
+            "subscription_cancel_at_period_end.eq.true,"
+            "subscription_status.eq.past_due"
+        )
         .lte("subscription_current_period_end", now)
     )
 
@@ -219,6 +227,31 @@ async def create_product_mapping(
     return rows[0]
 
 
+async def get_product_mapping(tenant_id: str, mapping_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("competitor_products")
+        .select("*, products(name), competitors(shop_name,selector_stock)")
+        .eq("tenant_id", tenant_id)
+        .eq("id", mapping_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_product_mapping(
+    tenant_id: str, mapping_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("competitor_products")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", mapping_id)
+    )
+    return rows[0] if rows else None
+
+
 async def delete_product_mapping(tenant_id: str, mapping_id: str) -> bool:
     rows = await _execute(
         lambda: get_supabase()
@@ -239,6 +272,7 @@ async def get_scrape_targets(
             .table("competitor_products")
             .select(
                 "id,tenant_id,competitor_url,selector_price,competitor_id,"
+                "health_status,consecutive_failures,"
                 "competitors!inner(selector_price,selector_stock,active,scrape_freq_h,last_scraped_at)"
             )
             .eq("active", True)
@@ -248,6 +282,8 @@ async def get_scrape_targets(
             query = query.eq("tenant_id", tenant_id)
         if competitor_product_ids:
             query = query.in_("id", competitor_product_ids)
+        else:
+            query = query.neq("health_status", "broken")
         return query
 
     rows = await _execute(build)
@@ -262,6 +298,8 @@ async def get_scrape_targets(
                 "selector_price": row.get("selector_price") or competitor.get("selector_price"),
                 "selector_stock": competitor.get("selector_stock"),
                 "competitor_id": row["competitor_id"],
+                "health_status": row.get("health_status"),
+                "consecutive_failures": row.get("consecutive_failures"),
                 "scrape_freq_h": competitor.get("scrape_freq_h"),
                 "last_scraped_at": competitor.get("last_scraped_at"),
             }
@@ -304,6 +342,51 @@ async def mark_competitor_scraped(
         .eq("tenant_id", tenant_id)
         .eq("id", competitor_id)
     )
+
+
+async def mark_source_scrape_success(
+    tenant_id: str, competitor_product_id: str, scraped_at: str
+) -> None:
+    await _execute(
+        lambda: get_supabase()
+        .table("competitor_products")
+        .update(
+            {
+                "health_status": "healthy",
+                "consecutive_failures": 0,
+                "last_failure_at": None,
+                "last_failure_reason": None,
+                "last_successful_scrape_at": scraped_at,
+                "broken_reason": None,
+                "repaired_at": scraped_at,
+            }
+        )
+        .eq("tenant_id", tenant_id)
+        .eq("id", competitor_product_id)
+    )
+
+
+async def mark_source_scrape_failure(
+    tenant_id: str,
+    competitor_product_id: str,
+    error: str,
+    *,
+    failed_at: str,
+    broken_threshold: int = 3,
+) -> dict[str, Any] | None:
+    current = await get_product_mapping(tenant_id, competitor_product_id)
+    if not current:
+        return None
+    failures = int(current.get("consecutive_failures") or 0) + 1
+    health_status = "broken" if failures >= broken_threshold else "degraded"
+    values = {
+        "consecutive_failures": failures,
+        "last_failure_at": failed_at,
+        "last_failure_reason": error,
+        "health_status": health_status,
+        "broken_reason": error if health_status == "broken" else None,
+    }
+    return await update_product_mapping(tenant_id, competitor_product_id, values)
 
 
 async def get_latest_prices(tenant_id: str) -> list[dict[str, Any]]:
@@ -433,6 +516,40 @@ async def list_alert_events(tenant_id: str, limit: int) -> list[dict[str, Any]]:
 async def insert_alert_event(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("alert_events").insert(values))
     return rows[0]
+
+
+async def create_alert_channel_delivery(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_channel_deliveries")
+        .insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def update_alert_channel_delivery(
+    delivery_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_channel_deliveries")
+        .update(values)
+        .eq("id", delivery_id)
+    )
+    return rows[0] if rows else None
+
+
+async def list_alert_channel_deliveries(
+    tenant_id: str, limit: int = 100
+) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("alert_channel_deliveries")
+        .select("*, alert_events(alert_id, competitor_product_id, triggered_at)")
+        .eq("tenant_id", tenant_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
 
 
 async def insert_scrape_failure(values: dict[str, Any]) -> dict[str, Any]:
@@ -639,7 +756,11 @@ async def list_connector_sources(tenant_id: str) -> list[dict[str, Any]]:
     rows = await _execute(
         lambda: get_supabase()
         .table("connector_sources")
-        .select("id,tenant_id,type,name,config,active,created_at")
+        .select(
+            "id,tenant_id,type,name,config,provider_details,credential_metadata,"
+            "active,last_sync_at,last_sync_status,last_sync_error,items_seen,"
+            "items_imported,items_updated,items_failed,created_at"
+        )
         .eq("tenant_id", tenant_id)
         .order("created_at", desc=True)
     )
@@ -685,6 +806,17 @@ async def update_connector_source(
         .eq("id", connector_id)
     )
     return rows[0] if rows else None
+
+
+async def delete_connector_source(tenant_id: str, connector_id: str) -> bool:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sources")
+        .delete()
+        .eq("tenant_id", tenant_id)
+        .eq("id", connector_id)
+    )
+    return bool(rows)
 
 
 async def insert_audit_event(values: dict[str, Any]) -> dict[str, Any]:
@@ -821,6 +953,31 @@ async def create_report_run(tenant_id: str, values: dict[str, Any]) -> dict[str,
     return rows[0]
 
 
+async def get_report_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("report_runs")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_report_run(
+    tenant_id: str, run_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("report_runs")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+    )
+    return rows[0] if rows else None
+
+
 async def list_report_runs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
     def build() -> Any:
         query = get_supabase().table("report_runs").select("*, report_schedules(name)")
@@ -829,6 +986,16 @@ async def list_report_runs(tenant_id: str | None = None, limit: int = 100) -> li
         return query.order("created_at", desc=True).limit(limit)
 
     return await _execute(build)
+
+
+async def list_due_report_schedules(now: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("report_schedules")
+        .select("*")
+        .eq("active", True)
+        .or_(f"next_run_at.is.null,next_run_at.lte.{now}")
+    )
 
 
 async def create_connector_sync_run(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -840,6 +1007,31 @@ async def create_connector_sync_run(tenant_id: str, values: dict[str, Any]) -> d
     return rows[0]
 
 
+async def get_connector_sync_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sync_runs")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_connector_sync_run(
+    tenant_id: str, run_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("connector_sync_runs")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+    )
+    return rows[0] if rows else None
+
+
 async def list_connector_sync_runs(tenant_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
     def build() -> Any:
         query = get_supabase().table("connector_sync_runs").select("*, connector_sources(name,type)")
@@ -848,3 +1040,23 @@ async def list_connector_sync_runs(tenant_id: str | None = None, limit: int = 10
         return query.order("created_at", desc=True).limit(limit)
 
     return await _execute(build)
+
+
+async def create_privacy_request(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("privacy_requests")
+        .insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def list_privacy_requests(tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("privacy_requests")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .order("requested_at", desc=True)
+        .limit(limit)
+    )

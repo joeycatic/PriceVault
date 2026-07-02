@@ -9,11 +9,13 @@ export function MutationButton({
   label,
   pendingLabel,
   action,
+  tone = 'danger',
 }: {
   id: string
   label: string
   pendingLabel: string
   action: (formData: FormData) => Promise<ActionResult>
+  tone?: 'danger' | 'neutral'
 }) {
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -31,7 +33,14 @@ export function MutationButton({
       }}
     >
       <input type="hidden" name="id" value={id} />
-      <button className="text-xs font-semibold text-red-700 hover:text-red-900 disabled:opacity-50" disabled={pending}>
+      <button
+        className={`text-xs font-semibold disabled:opacity-50 ${
+          tone === 'danger'
+            ? 'text-red-700 hover:text-red-900'
+            : 'text-merchant-success hover:text-vault-100'
+        }`}
+        disabled={pending}
+      >
         {pending ? pendingLabel : label}
       </button>
       {error && <span className="mt-1 block text-xs text-red-700" role="alert">{error}</span>}

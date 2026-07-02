@@ -31,6 +31,12 @@ async def get_settings(tenant: dict = Depends(get_current_tenant)) -> dict:
             "activation_state",
             "subscription_status",
             "subscription_plan",
+            "subscription_current_period_end",
+            "subscription_cancel_at_period_end",
+            "cancellation_effective_at",
+            "failed_payment_count",
+            "last_payment_error",
+            "next_payment_retry_at",
         )
     }
 
@@ -67,5 +73,13 @@ async def update_settings(
             "vat_id",
             "notification_defaults",
             "activation_state",
+            "subscription_status",
+            "subscription_plan",
+            "subscription_current_period_end",
+            "subscription_cancel_at_period_end",
+            "cancellation_effective_at",
+            "failed_payment_count",
+            "last_payment_error",
+            "next_payment_retry_at",
         )
     }

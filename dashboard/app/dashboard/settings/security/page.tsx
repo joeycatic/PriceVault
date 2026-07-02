@@ -6,14 +6,14 @@ export default async function SecuritySettingsPage() {
   const tenant = await currentTenant()
   return (
     <CategoryPage
-      eyebrow="Settings / Security"
-      title="Security/API"
-      description="API-Zugriff, Rollen und sichere Integrationsoberflaechen."
+      eyebrow="Einstellungen / Sicherheit"
+      title="Sicherheit/API"
+      description="API-Zugriff, Rollen und sichere Integrationsoberflächen."
       items={[
         { label: 'Rolle', value: tenant?.membership_role ?? 'owner' },
         { label: 'API', value: tenant?.plan === 'free' ? 'Pro erforderlich' : 'verfügbar' },
         { label: 'Audit', value: 'aktiv' },
-        { label: 'Secrets', value: 'verdeckt' },
+        { label: 'Zugangsdaten', value: 'verdeckt' },
       ]}
       links={[
         { href: '/dashboard/settings/api-keys', label: 'API-Keys' },

@@ -40,6 +40,10 @@ async def cancel_subscription(tenant: dict = Depends(require_owner)) -> dict[str
         raise HTTPException(status_code=400, detail="Kein aktives Viva-Abonnement vorhanden")
     await queries.update_tenant(
         tenant["id"],
-        {"subscription_status": "canceled"},
+        {
+            "subscription_cancel_at_period_end": True,
+            "cancellation_effective_at": tenant.get("subscription_current_period_end"),
+            "billing_status_metadata": {"cancel_requested": True},
+        },
     )
     return {"canceled": True}

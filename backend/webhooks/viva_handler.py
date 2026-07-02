@@ -90,6 +90,11 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
                 "subscription_status": "active",
                 "subscription_plan": order["plan"],
                 "subscription_current_period_end": next_month(now).isoformat(),
+                "subscription_cancel_at_period_end": False,
+                "cancellation_effective_at": None,
+                "failed_payment_count": 0,
+                "last_payment_error": None,
+                "next_payment_retry_at": None,
             },
         )
     return {"ok": True}

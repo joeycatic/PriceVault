@@ -2,23 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { backendFetch } from '@/lib/backend'
-import { createClient } from '@/lib/supabase/server'
+import { backendFetch, currentTenant } from '@/lib/backend'
 
 type ActionResult = { ok: boolean; message: string }
 
 export async function runManualScrape(formData: FormData): Promise<ActionResult> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return { ok: false, message: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' }
-
-  const { data: tenant } = await supabase
-    .from('tenants')
-    .select('id')
-    .limit(1)
-    .maybeSingle()
+  const tenant = await currentTenant()
   if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
 
   const mappingId = String(formData.get('competitor_product_id') ?? '').trim()

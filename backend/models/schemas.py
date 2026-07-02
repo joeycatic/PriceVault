@@ -68,14 +68,28 @@ class ProductMappingCreate(APIModel):
     selector_price: str | None = None
 
 
-AlertCondition = Literal["below_pct", "above_pct", "below_abs", "above_abs"]
+class ProductMappingRepair(APIModel):
+    competitor_url: HttpUrl | None = None
+    selector_price: str | None = None
+    selector_stock: str | None = None
+
+
+AlertCondition = Literal[
+    "below_pct",
+    "above_pct",
+    "below_abs",
+    "above_abs",
+    "out_of_stock",
+    "back_in_stock",
+    "undercut_abs",
+]
 
 
 class AlertCreate(APIModel):
     product_id: str | None = None
     competitor_id: str | None = None
     condition: AlertCondition
-    threshold: float = Field(gt=0)
+    threshold: float | None = Field(default=None, gt=0)
     notify_email: EmailStr
     cooldown_h: int = Field(default=24, ge=1, le=720)
 
@@ -117,6 +131,10 @@ class AlertChannelCreate(APIModel):
 class AlertChannelUpdate(APIModel):
     active: bool | None = None
     config: dict[str, Any] | None = None
+
+
+class AlertChannelTestRequest(APIModel):
+    channel_id: str
 
 
 TeamRole = Literal["owner", "admin", "analyst", "viewer", "billing", "member"]
@@ -169,6 +187,11 @@ class ConnectorSourceCreate(APIModel):
 
 class ConnectorSyncRequest(APIModel):
     connector_id: str
+
+
+class PrivacyRequestCreate(APIModel):
+    request_type: Literal["export", "deletion"]
+    confirmation_text: str | None = Field(default=None, max_length=200)
 
 
 class AdminPlanOverride(APIModel):

@@ -34,12 +34,12 @@ async function authenticatedTenant() {
   } = await supabase.auth.getUser()
   if (!user) return { supabase, user: null, tenant: null }
 
-  const { data: tenant } = await supabase
+  const { data: tenants } = await supabase
     .from('tenants')
-    .select('id, plan, user_id')
-    .limit(1)
-    .maybeSingle()
+    .select('id, plan, user_id, created_at')
+    .order('created_at', { ascending: true })
 
+  const tenant = tenants?.find((item) => item.user_id === user.id) ?? tenants?.[0] ?? null
   return { supabase, user, tenant }
 }
 
@@ -182,7 +182,7 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
     createdCompetitorId = competitor.id
   }
 
-  const { error: mappingError } = await supabase.from('competitor_products').upsert(
+  const { data: mapping, error: mappingError } = await supabase.from('competitor_products').upsert(
     {
       tenant_id: tenant.id,
       product_id: productId,
@@ -193,11 +193,25 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
     },
     { onConflict: 'product_id,competitor_id' },
   )
+    .select('id')
+    .single()
   if (mappingError) {
     if (createdCompetitorId) {
       await supabase.from('competitors').delete().eq('tenant_id', tenant.id).eq('id', createdCompetitorId)
     }
     return { ok: false, message: 'Die Preisquelle konnte nicht verbunden werden.' }
+  }
+
+  if (mapping?.id) {
+    try {
+      await backendFetch('/scrape/run', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({ tenant_id: tenant.id, competitor_product_ids: [mapping.id] }),
+        signal: AbortSignal.timeout(15_000),
+      })
+    } catch {
+      // Der automatische Abruf läuft später weiter; Onboarding darf dadurch nicht blockieren.
+    }
   }
 
   revalidatePath('/', 'layout')

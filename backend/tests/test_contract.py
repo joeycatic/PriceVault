@@ -76,11 +76,17 @@ def test_openapi_contains_phase_routes():
         "/onboarding/sequence",
         "/api-keys",
         "/alert-channels",
+        "/alert-channels/deliveries",
         "/export/csv",
         "/export/pdf",
         "/team/invite",
         "/connectors",
+        "/connectors/sync-runs",
         "/connectors/shopify/import",
+        "/report-schedules",
+        "/report-runs",
+        "/privacy/requests",
+        "/scrape/sources/{mapping_id}/repair",
         "/integrations/prices/latest",
     ):
         assert path in paths
@@ -1139,6 +1145,8 @@ def test_connector_source_list_is_plan_gated_and_redacts_secret_config(monkeypat
                     "access_token_ciphertext": "encrypted",
                 },
                 "active": True,
+                "last_sync_status": "succeeded",
+                "items_imported": 3,
             }
         ]
 
@@ -1158,6 +1166,8 @@ def test_connector_source_list_is_plan_gated_and_redacts_secret_config(monkeypat
             "name": "shop.myshopify.com",
             "config": {"shop_domain": "shop.myshopify.com"},
             "active": True,
+            "last_sync_status": "succeeded",
+            "items_imported": 3,
         }
     ]
 
@@ -1179,6 +1189,15 @@ def test_list_connector_sources_redacts_access_tokens(monkeypatch):
                     "access_token_ciphertext": "encrypted",
                 },
                 "active": True,
+                "provider_details": {},
+                "credential_metadata": {},
+                "last_sync_at": None,
+                "last_sync_status": None,
+                "last_sync_error": None,
+                "items_seen": 0,
+                "items_imported": 0,
+                "items_updated": 0,
+                "items_failed": 0,
                 "created_at": "2026-07-01T00:00:00+00:00",
             }
         ]
@@ -1195,6 +1214,15 @@ def test_list_connector_sources_redacts_access_tokens(monkeypatch):
             "name": "shop.myshopify.com",
             "config": {"shop_domain": "shop.myshopify.com"},
             "active": True,
+            "provider_details": {},
+            "credential_metadata": {},
+            "last_sync_at": None,
+            "last_sync_status": None,
+            "last_sync_error": None,
+            "items_seen": 0,
+            "items_imported": 0,
+            "items_updated": 0,
+            "items_failed": 0,
             "created_at": "2026-07-01T00:00:00+00:00",
         }
     ]
@@ -2389,7 +2417,13 @@ def test_billing_cancel_updates_subscription(monkeypatch):
     from routers import billing
 
     async def fake_current_tenant():
-        return {"id": "tenant-1", "plan": "pro", "billing_provider": "viva", "subscription_status": "active"}
+        return {
+            "id": "tenant-1",
+            "plan": "pro",
+            "billing_provider": "viva",
+            "subscription_status": "active",
+            "subscription_current_period_end": "2026-08-01T00:00:00+00:00",
+        }
 
     updates = []
     async def fake_update_tenant(tenant_id, values):
@@ -2405,7 +2439,16 @@ def test_billing_cancel_updates_subscription(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"canceled": True}
-    assert updates == [("tenant-1", {"subscription_status": "canceled"})]
+    assert updates == [
+        (
+            "tenant-1",
+            {
+                "subscription_cancel_at_period_end": True,
+                "cancellation_effective_at": "2026-08-01T00:00:00+00:00",
+                "billing_status_metadata": {"cancel_requested": True},
+            },
+        )
+    ]
 
 
 def test_viva_webhook_verifies_payment_and_activates_plan(monkeypatch):

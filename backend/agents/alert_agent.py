@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,15 +24,19 @@ class AlertAgent:
 
     @staticmethod
     def evaluate(alert: dict[str, Any], row: dict[str, Any]) -> bool:
+        if alert["condition"] == "out_of_stock":
+            return row.get("in_stock") is False
+        if alert["condition"] == "back_in_stock":
+            return row.get("in_stock") is True
         if row.get("delta_pct") is None or row.get("competitor_price") is None:
             return False
         delta = float(row["delta_pct"])
-        threshold = float(alert["threshold"])
+        threshold = float(alert["threshold"] or 0)
         if alert["condition"] == "below_pct":
             return delta < -threshold
         if alert["condition"] == "above_pct":
             return delta > threshold
-        if alert["condition"] == "below_abs":
+        if alert["condition"] in {"below_abs", "undercut_abs"}:
             return float(row["our_price"]) - float(row["competitor_price"]) > threshold
         if alert["condition"] == "above_abs":
             return float(row["competitor_price"]) - float(row["our_price"]) > threshold
@@ -95,18 +100,50 @@ class AlertAgent:
             "delta_pct": float(row["delta_pct"] or 0),
             "product_url": row["competitor_url"],
         }
+        alert_event_id = row.get("_alert_event_id")
         redis_url = os.environ.get("REDIS_URL")
         if redis_url:
             redis = await create_pool(RedisSettings.from_dsn(redis_url))
             try:
                 for channel in channels:
-                    await redis.enqueue_job("deliver_alert", channel=channel, payload=payload)
+                    delivery = await queries.create_alert_channel_delivery(
+                        tenant_id,
+                        {
+                            "alert_event_id": alert_event_id,
+                            "channel_id": channel.get("id"),
+                            "channel_type": channel["type"],
+                            "status": "queued",
+                            "payload": payload,
+                        },
+                    )
+                    await redis.enqueue_job(
+                        "deliver_alert",
+                        channel=channel,
+                        payload=payload,
+                        tenant_id=tenant_id,
+                        delivery_id=delivery.get("id"),
+                    )
             finally:
                 await redis.aclose()
             return
-        await asyncio.gather(
-            *(deliver_alert({}, channel=channel, payload=payload) for channel in channels)
-        )
+        for channel in channels:
+            delivery = await queries.create_alert_channel_delivery(
+                tenant_id,
+                {
+                    "alert_event_id": alert_event_id,
+                    "channel_id": channel.get("id"),
+                    "channel_type": channel["type"],
+                    "status": "queued",
+                    "payload": payload,
+                },
+            )
+            await deliver_alert(
+                {},
+                channel=channel,
+                payload=payload,
+                tenant_id=tenant_id,
+                delivery_id=delivery.get("id"),
+            )
 
     async def run(self, tenant_id: str) -> dict[str, int]:
         rows, alerts = await asyncio.gather(
@@ -136,18 +173,8 @@ class AlertAgent:
                         tenant_id=tenant_id,
                         error=str(exc),
                     )
-                try:
-                    await self._deliver_channels(tenant_id, row)
-                except Exception as exc:
-                    logger.error(
-                        "channel_delivery_failed",
-                        action="channel_delivery_failed",
-                        tenant_id=tenant_id,
-                        error=str(exc),
-                    )
-
                 now = datetime.now(timezone.utc).isoformat()
-                await queries.insert_alert_event(
+                event = await queries.insert_alert_event(
                     {
                         "alert_id": alert["id"],
                         "tenant_id": tenant_id,
@@ -156,9 +183,33 @@ class AlertAgent:
                         "competitor_price": row["competitor_price"],
                         "delta_pct": row["delta_pct"],
                         "email_sent": email_sent,
+                        "trigger_reason": alert["condition"],
                         "triggered_at": now,
                     }
                 )
+                with suppress(Exception):
+                    await queries.create_alert_channel_delivery(
+                        tenant_id,
+                        {
+                            "alert_event_id": event.get("id"),
+                            "channel_type": "email",
+                            "status": "succeeded" if email_sent else "failed",
+                            "attempt_count": 1,
+                            "payload": {"to": alert["notify_email"]},
+                            "last_error": None if email_sent else "E-Mail konnte nicht gesendet werden",
+                            "delivered_at": now if email_sent else None,
+                        },
+                    )
+                row_for_delivery = {**row, "_alert_event_id": event.get("id")}
+                try:
+                    await self._deliver_channels(tenant_id, row_for_delivery)
+                except Exception as exc:
+                    logger.error(
+                        "channel_delivery_failed",
+                        action="channel_delivery_failed",
+                        tenant_id=tenant_id,
+                        error=str(exc),
+                    )
                 await queries.update_alert(tenant_id, alert["id"], {"last_triggered_at": now})
                 triggered += 1
                 break

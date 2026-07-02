@@ -19,6 +19,8 @@ export function AlertForm({
 }) {
   const [pending, startTransition] = useTransition()
   const [result, setResult] = useState<ActionResult | null>(null)
+  const [condition, setCondition] = useState(alert?.condition ?? 'below_pct')
+  const needsThreshold = !['out_of_stock', 'back_in_stock'].includes(condition)
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -50,17 +52,24 @@ export function AlertForm({
       <div className="grid gap-4 sm:grid-cols-[1fr_140px]">
         <label>
           <span className="field-label">Bedingung</span>
-          <select className="field" name="condition" defaultValue={alert?.condition ?? 'below_pct'}>
+          <select className="field" name="condition" value={condition} onChange={(event) => setCondition(event.target.value as Alert['condition'])}>
             <option value="below_pct">Mitbewerber ist günstiger um mehr als (%)</option>
             <option value="above_pct">Mitbewerber ist teurer um mehr als (%)</option>
             <option value="below_abs">Mitbewerber ist günstiger um mehr als (€)</option>
             <option value="above_abs">Mitbewerber ist teurer um mehr als (€)</option>
+            <option value="undercut_abs">Mitbewerber unterbietet dich um (€)</option>
+            <option value="out_of_stock">Quelle ist nicht mehr verfügbar</option>
+            <option value="back_in_stock">Quelle ist wieder verfügbar</option>
           </select>
         </label>
-        <label>
-          <span className="field-label">Grenzwert</span>
-          <input className="field" name="threshold" type="number" min="0.01" step="0.01" required defaultValue={alert?.threshold ?? 10} />
-        </label>
+        {needsThreshold ? (
+          <label>
+            <span className="field-label">Grenzwert</span>
+            <input className="field" name="threshold" type="number" min="0.01" step="0.01" required defaultValue={alert?.threshold ?? 10} />
+          </label>
+        ) : (
+          <input type="hidden" name="threshold" value="" />
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
@@ -92,4 +101,3 @@ export function AlertForm({
     </form>
   )
 }
-

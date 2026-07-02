@@ -1,7 +1,10 @@
 """Customer report APIs and report schedule management."""
 
+import os
 from datetime import datetime, timedelta, timezone
 
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from auth.dependencies import get_current_tenant
@@ -97,7 +100,12 @@ async def list_schedules(tenant: dict = Depends(require_plan_admin("pro"))) -> l
 async def create_schedule(
     body: ReportScheduleCreate, tenant: dict = Depends(require_plan_admin("pro"))
 ) -> dict:
-    schedule = await queries.create_report_schedule(tenant["id"], body.model_dump(mode="json"))
+    values = body.model_dump(mode="json")
+    values["next_run_at"] = (
+        datetime.now(timezone.utc)
+        + timedelta(days=30 if body.cadence == "monthly" else 7)
+    ).isoformat()
+    schedule = await queries.create_report_schedule(tenant["id"], values)
     await record_audit_event(
         tenant,
         action="report_schedule.created",
@@ -166,6 +174,18 @@ async def send_now(schedule_id: str, tenant: dict = Depends(require_plan_admin("
         resource_id=run.get("id"),
         metadata={"schedule_id": schedule_id},
     )
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        redis = await create_pool(RedisSettings.from_dsn(redis_url))
+        try:
+            await redis.enqueue_job(
+                "send_report_run",
+                tenant_id=tenant["id"],
+                run_id=run["id"],
+                _job_id=f"report-{run['id']}",
+            )
+        finally:
+            await redis.aclose()
     return run
 
 

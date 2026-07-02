@@ -65,6 +65,7 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
               <th className="px-4 py-4 font-semibold">Deren Preis</th>
               <th className="px-4 py-4 font-semibold">Differenz</th>
               <th className="px-4 py-4 font-semibold">Bestand</th>
+              <th className="px-4 py-4 font-semibold">Quelle</th>
               <th className="px-5 py-4 text-right font-semibold">Letzter Abruf</th>
             </tr>
           </thead>
@@ -129,6 +130,17 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
                           }`}
                         />
                         {row.in_stock === null ? 'Unbekannt' : row.in_stock ? 'Verfügbar' : 'Nicht verfügbar'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-5">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
+                        row.health_status === 'broken'
+                          ? 'bg-red-50 text-red-700'
+                          : row.health_status === 'degraded'
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-emerald-50 text-emerald-700'
+                      }`}>
+                        {row.health_status === 'broken' ? 'Defekt' : row.health_status === 'degraded' ? 'Degradiert' : 'Gesund'}
                       </span>
                     </td>
                     <td className="px-5 py-5 text-right font-mono text-xs text-vault-500">

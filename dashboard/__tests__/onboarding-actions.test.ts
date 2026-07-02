@@ -7,7 +7,7 @@ describe('onboarding server actions', () => {
     const source = readFileSync('app/onboarding/actions.ts', 'utf8')
     const saveShop = source.match(/export async function saveShop[\s\S]*?export async function saveFirstProduct/)?.[0] ?? ''
 
-    expect(source).toContain(".select('id, plan, user_id')")
+    expect(source).toContain(".select('id, plan, user_id, created_at')")
     expect(saveShop).toContain('tenant.user_id !== user.id')
     expect(saveShop).toContain('Nur Owner dürfen den Shop bearbeiten.')
     expect(saveShop.indexOf('tenant.user_id !== user.id')).toBeLessThan(

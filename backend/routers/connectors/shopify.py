@@ -35,6 +35,8 @@ async def import_products(
                 "shop_domain": body.shop_domain,
                 "access_token_ciphertext": encrypted_token,
             },
+            "credential_metadata": {"access_token": "encrypted"},
+            "provider_details": {"mode": "admin_rest"},
         },
     )
     for product in products:

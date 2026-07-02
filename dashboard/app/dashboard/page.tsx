@@ -15,6 +15,7 @@ export default async function DashboardPage() {
 
   let rows: LatestPrice[] = []
   let priceSourceCount = 0
+  let unhealthySourceCount = 0
   let loadError = false
   if (tenant) {
     const [priceResult, sourceResult] = await Promise.all([
@@ -25,12 +26,13 @@ export default async function DashboardPage() {
         .order('delta_pct', { ascending: false }),
       supabase
         .from('competitor_products')
-        .select('id')
+        .select('id, health_status')
         .eq('tenant_id', tenant.id)
         .eq('active', true),
     ])
     rows = (priceResult.data ?? []) as LatestPrice[]
     priceSourceCount = sourceResult.data?.length ?? 0
+    unhealthySourceCount = sourceResult.data?.filter((source) => source.health_status !== 'healthy').length ?? 0
     loadError = Boolean(priceResult.error)
   }
 
@@ -62,6 +64,7 @@ export default async function DashboardPage() {
           { label: 'Preise erfasst', value: activePrices, detail: `${priceSourceCount} aktive Quellen`, tone: 'success' },
           { label: 'Handlungsbedarf', value: undercut, detail: 'Produkte unterboten', tone: undercut ? 'warning' : 'success' },
           { label: 'Nicht verfügbar', value: unavailable, detail: 'Aktuell nicht lieferbar', tone: unavailable ? 'danger' : 'success' },
+          { label: 'Quellenstatus', value: unhealthySourceCount, detail: 'Degradiert oder defekt', tone: unhealthySourceCount ? 'danger' : 'success' },
           { label: 'Letzter Abruf', value: lastScrapedAt ? formatRelativeTime(lastScrapedAt) : 'Noch nie', detail: 'Automatischer Preisabruf', tone: 'neutral' },
         ]} />
       </div>
@@ -76,6 +79,19 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {unhealthySourceCount > 0 && (
+            <section className="panel border-l-4 border-l-amber-400 p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="font-semibold">Preisquellen prüfen</h2>
+                  <p className="mt-1 text-sm text-vault-300">
+                    {unhealthySourceCount} Quelle(n) liefern wiederholt keine verwertbaren Preise.
+                  </p>
+                </div>
+                <Link href="/dashboard/products" className="button-secondary">Quellen reparieren</Link>
+              </div>
+            </section>
+          )}
           {!rows.length && (
             <section className="panel p-6" aria-labelledby="empty-prices">
               <h2 id="empty-prices" className="text-lg font-semibold">Noch keine gescrapten Preise</h2>

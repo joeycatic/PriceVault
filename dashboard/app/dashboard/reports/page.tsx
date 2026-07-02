@@ -1,10 +1,60 @@
 import Link from 'next/link'
+import { revalidatePath } from 'next/cache'
 
 import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
-import { currentTenant } from '@/lib/backend'
+import { MutationButton } from '@/components/ui/MutationButton'
+import { backendFetch, currentTenant } from '@/lib/backend'
+import { hasPlan } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { LatestPrice } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
+
+async function createSchedule(formData: FormData) {
+  'use server'
+  const tenant = await currentTenant()
+  if (!tenant) return
+  if (!hasPlan(tenant.plan, 'pro') || !['owner', 'admin'].includes(tenant.membership_role ?? 'owner')) {
+    return
+  }
+  const recipients = String(formData.get('recipients') ?? '')
+    .split(/[\n,;]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const response = await backendFetch('/report-schedules', tenant.id, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: String(formData.get('name') ?? '').trim(),
+      cadence: String(formData.get('cadence') ?? 'weekly'),
+      recipients,
+      include_csv: formData.get('include_csv') === 'on',
+      filters: {},
+    }),
+  })
+  if (!response.ok) return
+  revalidatePath('/dashboard/reports')
+}
+
+async function sendNow(formData: FormData) {
+  'use server'
+  const tenant = await currentTenant()
+  if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+  const id = String(formData.get('id') ?? '')
+  const response = await backendFetch(`/report-schedules/${id}/send-now`, tenant.id, { method: 'POST' })
+  if (!response.ok) return { ok: false, message: 'Report konnte nicht eingeplant werden.' }
+  revalidatePath('/dashboard/reports')
+  return { ok: true, message: 'Report wurde eingeplant.' }
+}
+
+async function deleteSchedule(formData: FormData) {
+  'use server'
+  const tenant = await currentTenant()
+  if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+  const id = String(formData.get('id') ?? '')
+  const response = await backendFetch(`/report-schedules/${id}`, tenant.id, { method: 'DELETE' })
+  if (!response.ok) return { ok: false, message: 'Zeitplan konnte nicht gelöscht werden.' }
+  revalidatePath('/dashboard/reports')
+  return { ok: true, message: 'Zeitplan gelöscht.' }
+}
 
 export default async function ReportsPage() {
   const tenant = await currentTenant()
@@ -33,6 +83,7 @@ export default async function ReportsPage() {
   const latest = (latestResult.data ?? []) as LatestPrice[]
   const schedules = schedulesResult.data ?? []
   const runs = runsResult.data ?? []
+  const canManageReports = hasPlan(tenant?.plan, 'pro') && ['owner', 'admin'].includes(tenant?.membership_role ?? 'owner')
   const undercut = latest.filter((row) => Number(row.delta_pct ?? 0) < 0)
   const unavailable = latest.filter((row) => row.in_stock === false)
   const volatile = latest.filter((row) => Math.abs(Number(row.delta_pct ?? 0)) >= 10)
@@ -97,11 +148,54 @@ export default async function ReportsPage() {
         <aside className="space-y-6">
           <section className="panel p-5">
             <h2 className="text-base font-semibold">Geplante Reports</h2>
+            {canManageReports ? (
+              <form action={createSchedule} className="mt-4 space-y-3 border-b border-vault-700 pb-5">
+                <label className="block">
+                  <span className="field-label">Name</span>
+                  <input className="field" name="name" placeholder="Wöchentlicher Preisreport" required />
+                </label>
+                <label className="block">
+                  <span className="field-label">Empfänger</span>
+                  <textarea className="field min-h-24" name="recipients" placeholder="einkauf@example.de" required />
+                </label>
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <label>
+                    <span className="field-label">Rhythmus</span>
+                    <select className="field" name="cadence" defaultValue="weekly">
+                      <option value="weekly">Wöchentlich</option>
+                      <option value="monthly">Monatlich</option>
+                    </select>
+                  </label>
+                  <label className="flex items-end gap-2 pb-3 text-sm text-vault-300">
+                    <input name="include_csv" type="checkbox" className="h-4 w-4" />
+                    CSV anhängen
+                  </label>
+                </div>
+                <button className="button-primary w-full">Zeitplan speichern</button>
+              </form>
+            ) : (
+              <p className="mt-4 text-sm text-vault-400">Geplante Reports können Owner und Admins ab dem Pro-Plan verwalten.</p>
+            )}
             <div className="mt-4 space-y-3">
               {schedules.map((schedule) => (
                 <div key={schedule.id} className="rounded-lg border border-vault-800 p-3">
-                  <p className="font-medium">{schedule.name}</p>
-                  <p className="mt-1 text-xs text-vault-400">{schedule.cadence} · {schedule.include_csv ? 'PDF + CSV' : 'PDF'}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{schedule.name}</p>
+                      <p className="mt-1 text-xs text-vault-400">
+                        {schedule.cadence === 'weekly' ? 'Wöchentlich' : 'Monatlich'} · {schedule.include_csv ? 'E-Mail + CSV' : 'E-Mail'}
+                      </p>
+                      <p className="mt-1 text-xs text-vault-500">
+                        Nächster Lauf: {schedule.next_run_at ? formatRelativeTime(schedule.next_run_at) : 'noch offen'}
+                      </p>
+                    </div>
+                    {canManageReports && (
+                      <div className="space-y-2 text-right">
+                        <MutationButton id={schedule.id} label="Senden" pendingLabel="Wird eingeplant …" action={sendNow} tone="neutral" />
+                        <MutationButton id={schedule.id} label="Löschen" pendingLabel="Wird gelöscht …" action={deleteSchedule} />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
               {!schedules.length && <p className="text-sm text-vault-400">Noch kein Zeitplan eingerichtet.</p>}
@@ -112,9 +206,14 @@ export default async function ReportsPage() {
             <h2 className="text-base font-semibold">Letzte Report-Läufe</h2>
             <div className="mt-4 space-y-3">
               {runs.map((run) => (
-                <div key={run.id} className="flex items-center justify-between border border-vault-800 p-3 text-sm">
-                  <span>{run.status}</span>
-                  <span className="font-mono text-xs text-vault-500">{formatRelativeTime(run.created_at)}</span>
+                <div key={run.id} className="border border-vault-800 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{run.status === 'sent' ? 'Gesendet' : run.status === 'failed' ? 'Fehlgeschlagen' : run.status === 'running' ? 'Läuft' : 'Eingeplant'}</span>
+                    <span className="font-mono text-xs text-vault-500">{formatRelativeTime(run.created_at)}</span>
+                  </div>
+                  {(run.delivery_error || run.error) && (
+                    <p className="mt-2 text-xs text-red-700">{run.delivery_error ?? run.error}</p>
+                  )}
                 </div>
               ))}
               {!runs.length && <p className="text-sm text-vault-400">Noch kein Report versendet.</p>}

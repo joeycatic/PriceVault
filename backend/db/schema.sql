@@ -18,6 +18,12 @@ create table public.tenants (
     check (subscription_status in ('inactive','active','past_due','canceled')),
   subscription_plan text check (subscription_plan is null or subscription_plan in ('pro','agency')),
   subscription_current_period_end timestamptz,
+  subscription_cancel_at_period_end boolean not null default false,
+  cancellation_effective_at timestamptz,
+  failed_payment_count int not null default 0 check (failed_payment_count >= 0),
+  last_payment_error text,
+  next_payment_retry_at timestamptz,
+  billing_status_metadata jsonb not null default '{}'::jsonb,
   timezone    text not null default 'Europe/Berlin',
   locale      text not null default 'de-DE',
   default_currency text not null default 'EUR',
@@ -44,8 +50,10 @@ create table public.billing_orders (
   status          text not null default 'pending'
                     check (status in ('pending','paid','failed','canceled')),
   transaction_id  uuid unique,
+  failure_reason  text,
   created_at      timestamptz not null default now(),
-  paid_at         timestamptz
+  paid_at         timestamptz,
+  failed_at       timestamptz
 );
 
 create table public.competitors (
@@ -82,6 +90,14 @@ create table public.competitor_products (
   competitor_sku  text,
   selector_price  text,
   active          boolean not null default true,
+  health_status   text not null default 'healthy'
+                    check (health_status in ('healthy','degraded','broken')),
+  consecutive_failures int not null default 0 check (consecutive_failures >= 0),
+  last_failure_at timestamptz,
+  last_failure_reason text,
+  last_successful_scrape_at timestamptz,
+  broken_reason   text,
+  repaired_at     timestamptz,
   created_at      timestamptz not null default now(),
   unique(product_id, competitor_id)
 );
@@ -107,13 +123,17 @@ create table public.alerts (
   tenant_id             uuid not null references public.tenants(id) on delete cascade,
   product_id            uuid references public.products(id) on delete cascade,
   competitor_id         uuid references public.competitors(id) on delete cascade,
-  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs')),
-  threshold             numeric(10,2) not null check (threshold > 0),
+  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs', 'out_of_stock', 'back_in_stock', 'undercut_abs')),
+  threshold             numeric(10,2),
   notify_email          text not null,
   active                boolean not null default true,
   last_triggered_at     timestamptz,
   cooldown_h            int not null default 24 check (cooldown_h between 1 and 720),
-  created_at            timestamptz not null default now()
+  created_at            timestamptz not null default now(),
+  check (
+    (condition in ('out_of_stock', 'back_in_stock') and threshold is null)
+    or (condition not in ('out_of_stock', 'back_in_stock') and threshold > 0)
+  )
 );
 
 create table public.alert_events (
@@ -125,6 +145,7 @@ create table public.alert_events (
   competitor_price      numeric(10,2),
   delta_pct             numeric(6,2),
   email_sent            boolean not null default false,
+  trigger_reason        text,
   triggered_at          timestamptz not null default now()
 );
 
@@ -162,6 +183,22 @@ create table public.alert_channels (
   created_at  timestamptz not null default now()
 );
 
+create table public.alert_channel_deliveries (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  alert_event_id  uuid references public.alert_events(id) on delete cascade,
+  channel_id      uuid references public.alert_channels(id) on delete set null,
+  channel_type    text not null check (channel_type in ('email','webhook','slack')),
+  status          text not null default 'queued'
+                    check (status in ('queued','running','succeeded','failed')),
+  attempt_count   int not null default 0 check (attempt_count >= 0),
+  payload         jsonb not null default '{}'::jsonb,
+  last_error      text,
+  next_retry_at   timestamptz,
+  created_at      timestamptz not null default now(),
+  delivered_at    timestamptz
+);
+
 create table public.team_members (
   id          uuid primary key default gen_random_uuid(),
   tenant_id   uuid not null references public.tenants(id) on delete cascade,
@@ -180,9 +217,16 @@ create table public.connector_sources (
   type        text not null check (type in ('shopify','woocommerce','feed_csv','google_merchant')),
   name        text not null,
   config      jsonb not null,
+  provider_details jsonb not null default '{}'::jsonb,
+  credential_metadata jsonb not null default '{}'::jsonb,
   active      boolean not null default true,
   last_sync_at timestamptz,
   last_sync_status text check (last_sync_status is null or last_sync_status in ('queued','running','succeeded','failed')),
+  last_sync_error text,
+  items_seen int not null default 0 check (items_seen >= 0),
+  items_imported int not null default 0 check (items_imported >= 0),
+  items_updated int not null default 0 check (items_updated >= 0),
+  items_failed int not null default 0 check (items_failed >= 0),
   created_at  timestamptz not null default now()
 );
 
@@ -222,7 +266,8 @@ create table public.report_schedules (
   filters jsonb not null default '{}'::jsonb,
   active boolean not null default true,
   created_at timestamptz not null default now(),
-  last_run_at timestamptz
+  last_run_at timestamptz,
+  next_run_at timestamptz
 );
 
 create table public.report_runs (
@@ -234,6 +279,13 @@ create table public.report_runs (
   include_csv boolean not null default false,
   filters jsonb not null default '{}'::jsonb,
   error text,
+  queued_at timestamptz not null default now(),
+  started_at timestamptz,
+  sent_at timestamptz,
+  failed_at timestamptz,
+  delivery_error text,
+  artifact_metadata jsonb not null default '{}'::jsonb,
+  generated_summary text,
   created_at timestamptz not null default now(),
   finished_at timestamptz
 );
@@ -245,9 +297,27 @@ create table public.connector_sync_runs (
   status text not null default 'queued' check (status in ('queued','running','succeeded','failed')),
   items_seen int not null default 0,
   items_imported int not null default 0,
+  items_updated int not null default 0,
+  items_failed int not null default 0,
   error text,
+  started_at timestamptz,
   created_at timestamptz not null default now(),
   finished_at timestamptz
+);
+
+create table public.privacy_requests (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  user_id uuid,
+  request_type text not null check (request_type in ('export','deletion')),
+  status text not null default 'requested'
+    check (status in ('requested','confirmed','processing','completed','canceled')),
+  confirmation_text text,
+  export_metadata jsonb not null default '{}'::jsonb,
+  notes text,
+  requested_at timestamptz not null default now(),
+  confirmed_at timestamptz,
+  completed_at timestamptz
 );
 
 alter table public.products
@@ -313,6 +383,8 @@ alter table public.scrape_jobs         enable row level security;
 alter table public.report_schedules    enable row level security;
 alter table public.report_runs         enable row level security;
 alter table public.connector_sync_runs enable row level security;
+alter table public.alert_channel_deliveries enable row level security;
+alter table public.privacy_requests    enable row level security;
 
 create or replace function public.my_tenant_id()
 returns uuid
@@ -407,6 +479,11 @@ create policy "alert_events: own tenant" on public.alert_events
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
 
+create policy "alert_channel_deliveries: tenant read" on public.alert_channel_deliveries
+  for select using (tenant_id = public.my_tenant_id());
+create policy "alert_channel_deliveries: admin insert" on public.alert_channel_deliveries
+  for insert with check (public.can_manage_team(tenant_id));
+
 create policy "scrape_failures: own tenant" on public.scrape_failures
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
@@ -458,10 +535,17 @@ create policy "scrape_jobs: tenant read" on public.scrape_jobs
   for select using (tenant_id = public.my_tenant_id());
 create policy "report_schedules: tenant read" on public.report_schedules
   for select using (tenant_id = public.my_tenant_id());
+create policy "report_schedules: admin write" on public.report_schedules
+  for all using (public.can_manage_team(tenant_id))
+  with check (public.can_manage_team(tenant_id));
 create policy "report_runs: tenant read" on public.report_runs
   for select using (tenant_id = public.my_tenant_id());
 create policy "connector_sync_runs: tenant read" on public.connector_sync_runs
   for select using (tenant_id = public.my_tenant_id());
+create policy "privacy_requests: tenant read" on public.privacy_requests
+  for select using (tenant_id = public.my_tenant_id());
+create policy "privacy_requests: tenant insert" on public.privacy_requests
+  for insert with check (tenant_id = public.my_tenant_id());
 
 create or replace view public.v_latest_prices
 with (security_invoker = true) as
@@ -471,6 +555,12 @@ select distinct on (cp.id)
   cp.product_id,
   cp.competitor_id,
   cp.competitor_url,
+  cp.health_status,
+  cp.consecutive_failures,
+  cp.last_failure_at,
+  cp.last_failure_reason,
+  cp.last_successful_scrape_at,
+  cp.broken_reason,
   p.name                  as product_name,
   p.our_price,
   p.our_currency,
@@ -481,9 +571,10 @@ select distinct on (cp.id)
   ps.scrape_ok,
   round(((ps.price - p.our_price) / nullif(p.our_price, 0)) * 100, 2) as delta_pct
 from public.competitor_products cp
-join public.products p    on p.id = cp.product_id
-join public.competitors c on c.id = cp.competitor_id
-left join public.price_snapshots ps on ps.competitor_product_id = cp.id
+join public.products p    on p.id = cp.product_id and p.tenant_id = cp.tenant_id
+join public.competitors c on c.id = cp.competitor_id and c.tenant_id = cp.tenant_id
+left join public.price_snapshots ps
+  on ps.competitor_product_id = cp.id and ps.tenant_id = cp.tenant_id
 where cp.active = true and p.active = true and c.active = true
 order by cp.id, ps.scraped_at desc;
 
@@ -491,6 +582,7 @@ grant usage on schema public to authenticated, service_role;
 grant select, insert, update, delete on public.tenants, public.competitors,
   public.products, public.competitor_products, public.alerts to authenticated;
 grant select on public.price_snapshots, public.alert_events, public.v_latest_prices to authenticated;
+grant select on public.alert_channel_deliveries to authenticated;
 grant select on public.scrape_failures to authenticated;
 grant select (id, tenant_id, name, created_at, last_used, revoked)
   on public.api_keys to authenticated;
@@ -501,7 +593,10 @@ grant update (revoked)
 grant select, insert, update, delete on public.alert_channels,
   public.connector_sources to authenticated;
 grant select on public.audit_events, public.scrape_jobs, public.report_schedules,
-  public.report_runs, public.connector_sync_runs to authenticated;
+  public.report_runs, public.connector_sync_runs, public.privacy_requests to authenticated;
+grant insert on public.report_schedules, public.report_runs, public.connector_sync_runs,
+  public.privacy_requests, public.alert_channel_deliveries to authenticated;
+grant update on public.report_schedules to authenticated;
 grant select on public.team_members to authenticated;
 create policy "billing_orders: tenant owner read" on public.billing_orders
   for select using (
@@ -532,7 +627,8 @@ grant all on public.tenants, public.competitors, public.products,
   public.alert_events, public.scrape_failures, public.api_keys,
   public.alert_channels, public.team_members, public.connector_sources,
   public.audit_events, public.scrape_jobs, public.report_schedules,
-  public.report_runs, public.connector_sync_runs to service_role;
+  public.report_runs, public.connector_sync_runs, public.alert_channel_deliveries,
+  public.privacy_requests to service_role;
 grant all on public.billing_orders to service_role;
 
 notify pgrst, 'reload schema';

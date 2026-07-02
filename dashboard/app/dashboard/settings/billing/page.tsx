@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { planLimit } from '@/lib/plan-gates'
+import { createClient } from '@/lib/supabase/server'
+import { formatRelativeTime } from '@/lib/utils'
 
 async function startCheckout(formData: FormData) {
   'use server'
@@ -36,9 +38,18 @@ const plans = [
 
 export default async function BillingPage() {
   const tenant = await currentTenant()
+  const supabase = await createClient()
   const currentPlan = tenant?.plan ?? 'free'
   const currentLimits = planLimit(currentPlan)
   const canManageBilling = tenant?.membership_role === 'owner'
+  const { data: orders } = tenant
+    ? await supabase
+      .from('billing_orders')
+      .select('*')
+      .eq('tenant_id', tenant.id)
+      .order('created_at', { ascending: false })
+      .limit(12)
+    : { data: [] }
 
   return (
     <>
@@ -72,7 +83,37 @@ export default async function BillingPage() {
         ))}
       </div>
 
-      {canManageBilling && tenant?.billing_provider === 'viva' && tenant.subscription_status === 'active' ? (
+      {tenant && (
+        <section className="panel mt-6 p-5" aria-labelledby="billing-state">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="eyebrow">Aktueller Status</p>
+              <h2 id="billing-state" className="mt-2 text-xl font-semibold">
+                {tenant.subscription_status === 'active' ? 'Aktives Abonnement' : tenant.subscription_status === 'past_due' ? 'Zahlung überfällig' : tenant.subscription_status === 'canceled' ? 'Gekündigt' : 'Kein aktives Abonnement'}
+              </h2>
+              <p className="mt-2 text-sm text-vault-300">
+                Plan {tenant.subscription_plan ?? tenant.plan} · Verlängerung {tenant.subscription_current_period_end ? formatRelativeTime(tenant.subscription_current_period_end) : 'nicht geplant'}
+              </p>
+              {tenant.subscription_cancel_at_period_end && (
+                <p className="mt-3 text-sm text-amber-700">
+                  Dein Abonnement endet zum Periodenende {tenant.cancellation_effective_at ? formatRelativeTime(tenant.cancellation_effective_at) : ''}. Danach wird der Free-Plan aktiv.
+                </p>
+              )}
+              {tenant.last_payment_error && (
+                <p className="mt-3 text-sm text-red-700">
+                  Letzter Zahlungsfehler: {tenant.last_payment_error}
+                  {tenant.next_payment_retry_at ? ` · nächster Versuch ${formatRelativeTime(tenant.next_payment_retry_at)}` : ''}
+                </p>
+              )}
+            </div>
+            <p className="rounded-lg border border-vault-800 px-3 py-2 text-sm text-vault-300">
+              Fehlversuche: {tenant.failed_payment_count ?? 0} / 3
+            </p>
+          </div>
+        </section>
+      )}
+
+      {canManageBilling && tenant?.billing_provider === 'viva' && tenant.subscription_status === 'active' && !tenant.subscription_cancel_at_period_end ? (
         <form action={cancelSubscription} className="mt-6">
           <button className="button-secondary">Abonnement kündigen</button>
         </form>
@@ -84,6 +125,25 @@ export default async function BillingPage() {
       <p className="mt-4 text-sm text-vault-300">
         Aktuelles Tageslimit: {currentLimits.scrapesPerDay.toLocaleString('de-DE')} Preisabrufe.
       </p>
+
+      <section className="panel mt-6 overflow-hidden">
+        <div className="border-b border-vault-700 px-5 py-4 font-semibold">Abrechnungshistorie</div>
+        <div className="divide-y divide-vault-700/70">
+          {(orders ?? []).map((order) => (
+            <article key={order.id} className="flex flex-col gap-2 p-5 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold">{order.plan} · {(order.amount_cents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</p>
+                <p className="mt-1 font-mono text-xs text-vault-500">Order {order.order_code}</p>
+              </div>
+              <div className="text-left sm:text-right">
+                <p>{order.status}</p>
+                <p className="mt-1 text-xs text-vault-500">{formatRelativeTime(order.created_at)}</p>
+              </div>
+            </article>
+          ))}
+          {!(orders ?? []).length && <p className="p-5 text-sm text-vault-400">Noch keine Viva-Bestellungen gespeichert.</p>}
+        </div>
+      </section>
     </>
   )
 }

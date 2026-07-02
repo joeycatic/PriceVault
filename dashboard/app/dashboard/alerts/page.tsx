@@ -12,32 +12,41 @@ const conditionLabels: Record<Alert['condition'], string> = {
   above_pct: 'Mitbewerber teurer als du',
   below_abs: 'Mitbewerber absolut günstiger',
   above_abs: 'Mitbewerber absolut teurer',
+  undercut_abs: 'Mitbewerber unterbietet dich',
+  out_of_stock: 'Quelle nicht verfügbar',
+  back_in_stock: 'Quelle wieder verfügbar',
 }
 
 export default async function AlertsPage() {
   const supabase = await createClient()
   const tenant = await currentTenant()
-  const [alertResult, productResult, competitorResult] = tenant
+  const [alertResult, productResult, competitorResult, eventResult, deliveryResult] = tenant
     ? await Promise.all([
         supabase.from('alerts').select('*').eq('tenant_id', tenant.id).order('created_at', { ascending: false }),
         supabase.from('products').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
         supabase.from('competitors').select('*').eq('tenant_id', tenant.id).eq('active', true).order('shop_name'),
+        supabase.from('alert_events').select('*').eq('tenant_id', tenant.id).order('triggered_at', { ascending: false }).limit(10),
+        supabase.from('alert_channel_deliveries').select('*').eq('tenant_id', tenant.id).order('created_at', { ascending: false }).limit(10),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }]
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }]
   const alerts = (alertResult.data ?? []) as Alert[]
   const products = (productResult.data ?? []) as Product[]
   const competitors = (competitorResult.data ?? []) as Competitor[]
+  const events = eventResult.data ?? []
+  const deliveries = deliveryResult.data ?? []
   const alertLimit = planLimit(tenant?.plan).alerts
 
   async function saveAction(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
     const client = await createClient()
+    const condition = String(formData.get('condition'))
+    const thresholdRaw = String(formData.get('threshold') ?? '').trim()
     const values = {
       product_id: String(formData.get('product_id') || '') || null,
       competitor_id: String(formData.get('competitor_id') || '') || null,
-      condition: String(formData.get('condition')),
-      threshold: Number(formData.get('threshold')),
+      condition,
+      threshold: ['out_of_stock', 'back_in_stock'].includes(condition) ? null : Number(thresholdRaw),
       notify_email: String(formData.get('notify_email')),
       cooldown_h: Number(formData.get('cooldown_h')),
     }
@@ -111,7 +120,7 @@ export default async function AlertsPage() {
                         {product?.name ?? 'Alle Produkte'} · {competitor?.shop_name ?? 'Alle Mitbewerber'}
                       </p>
                       <p className="mt-3 font-mono text-xs text-vault-500">
-                        Grenzwert {Number(alert.threshold).toLocaleString('de-DE')} {suffix} · Ruhezeit {alert.cooldown_h} Std.
+                        {alert.threshold === null ? 'Statusregel' : `Grenzwert ${Number(alert.threshold).toLocaleString('de-DE')} ${suffix}`} · Ruhezeit {alert.cooldown_h} Std.
                       </p>
                     </div>
                     <form action={deleteAlert}>
@@ -130,6 +139,43 @@ export default async function AlertsPage() {
             }) : (
               <div className="panel p-6 text-sm text-vault-300">Noch keine Preisalarme eingerichtet.</div>
             )}
+          </section>
+        </div>
+      )}
+      {tenant && (
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          <section className="panel overflow-hidden">
+            <div className="border-b border-vault-700 px-5 py-4 font-semibold">Letzte Ereignisse</div>
+            <div className="divide-y divide-vault-700/70">
+              {events.map((event) => (
+                <article key={event.id} className="p-5 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{event.trigger_reason ?? 'Preisalarm'}</span>
+                    <span className="font-mono text-xs text-vault-500">{new Date(event.triggered_at).toLocaleString('de-DE')}</span>
+                  </div>
+                  <p className="mt-2 font-mono text-xs text-vault-400">
+                    {event.competitor_price ?? '-'} EUR · {event.delta_pct ?? '-'} %
+                  </p>
+                </article>
+              ))}
+              {!events.length && <p className="p-5 text-sm text-vault-400">Noch keine Alert-Ereignisse.</p>}
+            </div>
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="border-b border-vault-700 px-5 py-4 font-semibold">Kanal-Zustellungen</div>
+            <div className="divide-y divide-vault-700/70">
+              {deliveries.map((delivery) => (
+                <article key={delivery.id} className="p-5 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{delivery.channel_type} · {delivery.status}</span>
+                    <span className="font-mono text-xs text-vault-500">{delivery.attempt_count ?? 0} Versuch(e)</span>
+                  </div>
+                  {delivery.last_error && <p className="mt-2 text-xs text-red-700">{delivery.last_error}</p>}
+                </article>
+              ))}
+              {!deliveries.length && <p className="p-5 text-sm text-vault-400">Noch keine Zustellversuche.</p>}
+            </div>
           </section>
         </div>
       )}

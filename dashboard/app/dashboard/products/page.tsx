@@ -1,4 +1,5 @@
 import { revalidatePath } from 'next/cache'
+import Link from 'next/link'
 
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { PageHeader } from '@/components/ui/MerchantUI'
@@ -6,7 +7,7 @@ import { MutationButton } from '@/components/ui/MutationButton'
 import { MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
 import { ExportButton } from '@/app/dashboard/products/[id]/ExportButton'
-import { currentTenant } from '@/lib/backend'
+import { backendFetch, currentTenant } from '@/lib/backend'
 import { parsePriceInput } from '@/lib/priceInput'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
@@ -74,6 +75,7 @@ export default async function ProductsPage() {
   const latestRows = (latestResult.data ?? []) as LatestPrice[]
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
   const productLimit = planLimit(tenant?.plan).products
+  const unhealthyMappings = mappings.filter((mapping) => ['degraded', 'broken'].includes(mapping.health_status))
 
   async function createProduct(formData: FormData) {
     'use server'
@@ -155,7 +157,7 @@ export default async function ProductsPage() {
     if (!productId || !competitorId || !competitorUrl) {
       return { ok: false, message: 'Produkt, Mitbewerber und URL sind erforderlich.' }
     }
-    const { error } = await client.from('competitor_products').insert({
+    const { data, error } = await client.from('competitor_products').insert({
       tenant_id: tenant.id,
       product_id: productId,
       competitor_id: competitorId,
@@ -163,12 +165,46 @@ export default async function ProductsPage() {
       competitor_sku: String(formData.get('competitor_sku') || '') || null,
       selector_price: String(formData.get('selector_price') || '') || null,
     })
+      .select('id')
+      .single()
     if (error) {
       return { ok: false, message: 'Die Zuordnung konnte nicht gespeichert werden. Prüfe, ob sie bereits existiert.' }
+    }
+    if (data?.id) {
+      try {
+        await backendFetch('/scrape/run', tenant.id, {
+          method: 'POST',
+          body: JSON.stringify({ tenant_id: tenant.id, competitor_product_ids: [data.id] }),
+          signal: AbortSignal.timeout(15_000),
+        })
+      } catch {
+        // Die Quelle ist gespeichert; der nächste automatische Abruf übernimmt.
+      }
     }
     revalidatePath('/dashboard/products')
     revalidatePath('/dashboard')
     return { ok: true, message: 'Preisquelle wurde zugeordnet.' }
+  }
+
+  async function repairSource(formData: FormData) {
+    'use server'
+    if (!tenant) return
+    const id = String(formData.get('id') ?? '')
+    const competitorUrl = String(formData.get('competitor_url') ?? '').trim()
+    const selectorPrice = String(formData.get('selector_price') ?? '').trim()
+    const response = await backendFetch(`/scrape/sources/${id}/repair`, tenant.id, {
+      method: 'POST',
+      body: JSON.stringify({
+        competitor_url: competitorUrl || undefined,
+        selector_price: selectorPrice || null,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    })
+    if (!response.ok) return
+    const payload = (await response.json()) as { repaired?: boolean }
+    if (!payload.repaired) return
+    revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
   }
 
   async function deleteMapping(formData: FormData) {
@@ -252,6 +288,15 @@ export default async function ProductsPage() {
             </p>
           )}
 
+          {unhealthyMappings.length > 0 && (
+            <section className="panel border-l-4 border-l-amber-400 p-5" aria-labelledby="source-health">
+              <h2 id="source-health" className="text-base font-semibold">Preisquellen benötigen Aufmerksamkeit</h2>
+              <p className="mt-2 text-sm leading-6 text-vault-300">
+                {unhealthyMappings.length} Quelle(n) sind degradiert oder defekt. Repariere URL oder Preis-Selektor und starte danach einen Testabruf.
+              </p>
+            </section>
+          )}
+
           <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="panel p-5 sm:p-6" aria-labelledby="new-mapping">
               <p className="eyebrow">Preisquelle</p>
@@ -269,7 +314,11 @@ export default async function ProductsPage() {
                 {products.map((product) => (
                   <article key={product.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h3 className="font-semibold">{product.name}</h3>
+                      <h3 className="font-semibold">
+                        <Link href={`/dashboard/products/${product.id}`} className="hover:text-merchant-success">
+                          {product.name}
+                        </Link>
+                      </h3>
                       <p className="mt-1 font-mono text-xs text-vault-500">{product.our_sku ?? 'Keine SKU'} · {formatPrice(product.our_price, product.our_currency)}</p>
                     </div>
                     <MutationButton id={product.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivateProduct} />
@@ -294,6 +343,7 @@ export default async function ProductsPage() {
                       <th className="px-4 py-4">Eigener Preis</th>
                       <th className="px-4 py-4">Mitbewerber</th>
                       <th className="px-4 py-4">Letzter Abruf</th>
+                      <th className="px-4 py-4">Status</th>
                       <th className="px-4 py-4">Gefundener Preis</th>
                       <th className="px-4 py-4">Produkt-URL</th>
                       <th className="px-5 py-4 text-right">Aktion</th>
@@ -312,6 +362,20 @@ export default async function ProductsPage() {
                             {latest?.scraped_at ? formatRelativeTime(latest.scraped_at) : 'Noch nie'}
                             {latest?.scrape_ok === false && <span className="mt-1 block text-red-700">Fehlgeschlagen</span>}
                           </td>
+                          <td className="px-4 py-4 text-xs">
+                            <span className={`inline-flex rounded-full px-2 py-1 font-semibold ${
+                              mapping.health_status === 'broken'
+                                ? 'bg-red-50 text-red-700'
+                                : mapping.health_status === 'degraded'
+                                  ? 'bg-amber-50 text-amber-700'
+                                  : 'bg-emerald-50 text-emerald-700'
+                            }`}>
+                              {mapping.health_status === 'broken' ? 'Defekt' : mapping.health_status === 'degraded' ? 'Degradiert' : 'Gesund'}
+                            </span>
+                            {mapping.last_failure_reason && (
+                              <span className="mt-1 block max-w-48 truncate text-vault-500">{mapping.last_failure_reason}</span>
+                            )}
+                          </td>
                           <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(latest?.competitor_price ?? null)}</td>
                           <td className="max-w-xs truncate px-4 py-4 font-mono text-xs text-vault-500">{mapping.competitor_url}</td>
                           <td className="space-y-2 px-5 py-4 text-right">
@@ -323,6 +387,23 @@ export default async function ProductsPage() {
                               compact
                             />
                             <ExportButton competitorProductId={mapping.id} />
+                            {mapping.health_status !== 'healthy' && (
+                              <details className="text-left">
+                                <summary className="cursor-pointer text-xs font-semibold text-merchant-success">Reparieren</summary>
+                                <form action={repairSource} className="mt-3 space-y-2">
+                                  <input type="hidden" name="id" value={mapping.id} />
+                                  <label className="block">
+                                    <span className="field-label">URL</span>
+                                    <input className="field min-w-64" name="competitor_url" defaultValue={mapping.competitor_url} />
+                                  </label>
+                                  <label className="block">
+                                    <span className="field-label">Preis-Selektor</span>
+                                    <input className="field min-w-64" name="selector_price" defaultValue={mapping.selector_price ?? ''} />
+                                  </label>
+                                  <button className="button-secondary w-full">Testen</button>
+                                </form>
+                              </details>
+                            )}
                             <MutationButton id={mapping.id} label="Entfernen" pendingLabel="Wird entfernt …" action={deleteMapping} />
                           </td>
                         </tr>

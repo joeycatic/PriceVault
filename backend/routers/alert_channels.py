@@ -2,11 +2,12 @@
 
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from auth.plan_guard import require_plan_admin
 from db import queries
 from models.schemas import AlertChannelCreate, AlertChannelUpdate
+from jobs.alert_tasks import deliver_alert
 from security.crypto import decrypt_secret, encrypt_secret
 from security.urls import validate_delivery_url
 
@@ -66,6 +67,14 @@ async def list_all(tenant: dict = Depends(require_plan_admin("pro"))) -> list[di
     return [_public_channel(channel) for channel in channels]
 
 
+@router.get("/deliveries")
+async def list_deliveries(
+    limit: int = Query(default=100, ge=1, le=500),
+    tenant: dict = Depends(require_plan_admin("pro")),
+) -> list[dict]:
+    return await queries.list_alert_channel_deliveries(tenant["id"], limit)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create(
     body: AlertChannelCreate, tenant: dict = Depends(require_plan_admin("pro"))
@@ -79,6 +88,39 @@ async def create(
         },
     )
     return _public_channel(channel)
+
+
+@router.post("/{channel_id}/test")
+async def test_channel(
+    channel_id: str, tenant: dict = Depends(require_plan_admin("pro"))
+) -> dict[str, bool]:
+    channel = await queries.get_alert_channel(tenant["id"], channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Kanal nicht gefunden")
+    payload = {
+        "product_name": "PriceVault Test",
+        "old_price": 100.0,
+        "new_price": 95.0,
+        "delta_pct": -5.0,
+        "product_url": "https://app.pricevault.de/dashboard/alerts",
+    }
+    delivery = await queries.create_alert_channel_delivery(
+        tenant["id"],
+        {
+            "channel_id": channel_id,
+            "channel_type": channel["type"],
+            "status": "queued",
+            "payload": payload,
+        },
+    )
+    await deliver_alert(
+        {},
+        channel=channel,
+        payload=payload,
+        tenant_id=tenant["id"],
+        delivery_id=delivery.get("id"),
+    )
+    return {"sent": True}
 
 
 @router.patch("/{channel_id}")
