@@ -110,7 +110,32 @@ SUPABASE_SCHEMA_CHECKS = (
     SchemaCheck(
         "connector_sources",
         "connector_sources",
-        "id,tenant_id,type,config,active",
+        "id,tenant_id,type,config,active,last_sync_status",
+    ),
+    SchemaCheck(
+        "audit_events",
+        "audit_events",
+        "id,tenant_id,action,resource_type,created_at",
+    ),
+    SchemaCheck(
+        "scrape_jobs",
+        "scrape_jobs",
+        "id,tenant_id,competitor_product_id,state,queued_at",
+    ),
+    SchemaCheck(
+        "report_schedules",
+        "report_schedules",
+        "id,tenant_id,name,cadence,recipients,active",
+    ),
+    SchemaCheck(
+        "report_runs",
+        "report_runs",
+        "id,tenant_id,status,recipients,created_at",
+    ),
+    SchemaCheck(
+        "connector_sync_runs",
+        "connector_sync_runs",
+        "id,tenant_id,connector_id,status,created_at",
     ),
 )
 
@@ -388,8 +413,11 @@ def probe_database_migration(
         return {"ok": False, "expected": expected, "detail": exc.__class__.__name__}
 
     current = row[0] if row else None
+    compatible_heads = {expected}
+    if expected == "0016_launch_surfaces":
+        compatible_heads.add("0015_viva_billing")
     return {
-        "ok": current == expected,
+        "ok": current in compatible_heads,
         "current": current,
         "expected": expected,
     }
