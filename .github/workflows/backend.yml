@@ -41,7 +41,17 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+      - name: Check Railway deploy secrets
+        id: railway-secrets
+        run: |
+          if [ -n "$RAILWAY_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       - name: Install deps
         run: pip install -r backend/requirements.txt
       - name: Dependency audit
@@ -78,15 +88,15 @@ jobs:
           REDIS_URL: redis://localhost:6379
           CONNECTOR_ENCRYPTION_KEY: ci-connector-secret
       - name: Install Railway CLI
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.railway-secrets.outputs.configured == 'true'
         run: npm install --global @railway/cli@5.23.3
       - name: Deploy backend to Railway
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.railway-secrets.outputs.configured == 'true'
         run: railway up --service pricevault-backend --ci
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       - name: Deploy worker to Railway
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.railway-secrets.outputs.configured == 'true'
         run: railway up --service pricevault-worker --ci
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
