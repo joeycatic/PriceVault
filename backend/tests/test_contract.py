@@ -4117,5 +4117,33 @@ def test_structlog_emits_first_class_json_fields(capsys):
     assert payload["level"] == "info"
 
 
+def test_admin_overview_degrades_when_optional_support_tables_are_missing(monkeypatch):
+    from routers import admin
+
+    async def list_tenants():
+        return [{"id": "tenant-1", "shop_name": "Growvault", "plan": "agency"}]
+
+    async def missing_scrape_jobs(*, limit):
+        del limit
+        raise RuntimeError("Could not find the table 'public.scrape_jobs'")
+
+    async def empty_rows(*, limit):
+        del limit
+        return []
+
+    monkeypatch.setattr(admin.queries, "list_tenants", list_tenants)
+    monkeypatch.setattr(admin.queries, "list_scrape_jobs", missing_scrape_jobs)
+    monkeypatch.setattr(admin.queries, "list_report_runs", empty_rows)
+    monkeypatch.setattr(admin.queries, "list_connector_sync_runs", empty_rows)
+    monkeypatch.setattr(admin.queries, "list_audit_events", empty_rows)
+
+    result = asyncio.run(admin.overview(limit=20, admin_tenant={"id": "tenant-1"}))
+
+    assert result["tenants"][0]["shop_name"] == "Growvault"
+    assert result["scrape_jobs"] == []
+    assert result["access_issues"][0]["resource"] == "scrape_jobs"
+    assert "nicht verfuegbar" in result["access_issues"][0]["message"]
+
+
 async def _collect_async(generator):
     return [item async for item in generator]

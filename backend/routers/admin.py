@@ -1,6 +1,8 @@
 """Internal PriceVault support console APIs."""
 
 import os
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -31,18 +33,61 @@ async def require_platform_admin(tenant: dict = Depends(get_current_tenant)) -> 
     return tenant
 
 
+async def _optional_overview_rows(
+    resource: str,
+    loader: Callable[[], Awaitable[list[dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+    try:
+        return await loader(), None
+    except Exception as exc:
+        return [], {
+            "resource": resource,
+            "code": getattr(exc, "code", None) or type(exc).__name__,
+            "message": "Datengruppe ist im aktuellen Schema nicht verfuegbar.",
+            "details": str(exc)[:240],
+        }
+
+
 @router.get("/overview")
 async def overview(
     limit: int = Query(default=100, ge=1, le=500),
     admin_tenant: dict = Depends(require_platform_admin),
 ) -> dict:
     del admin_tenant
+    scrape_jobs, scrape_jobs_issue = await _optional_overview_rows(
+        "scrape_jobs",
+        lambda: queries.list_scrape_jobs(limit=limit),
+    )
+    report_runs, report_runs_issue = await _optional_overview_rows(
+        "report_runs",
+        lambda: queries.list_report_runs(limit=limit),
+    )
+    connector_sync_runs, connector_sync_runs_issue = await _optional_overview_rows(
+        "connector_sync_runs",
+        lambda: queries.list_connector_sync_runs(limit=limit),
+    )
+    audit_events, audit_events_issue = await _optional_overview_rows(
+        "audit_events",
+        lambda: queries.list_audit_events(limit=limit),
+    )
+    access_issues = [
+        issue
+        for issue in (
+            scrape_jobs_issue,
+            report_runs_issue,
+            connector_sync_runs_issue,
+            audit_events_issue,
+        )
+        if issue
+    ]
+
     return {
         "tenants": await queries.list_tenants(),
-        "scrape_jobs": await queries.list_scrape_jobs(limit=limit),
-        "report_runs": await queries.list_report_runs(limit=limit),
-        "connector_sync_runs": await queries.list_connector_sync_runs(limit=limit),
-        "audit_events": await queries.list_audit_events(limit=limit),
+        "scrape_jobs": scrape_jobs,
+        "report_runs": report_runs,
+        "connector_sync_runs": connector_sync_runs,
+        "audit_events": audit_events,
+        "access_issues": access_issues,
     }
 
 
