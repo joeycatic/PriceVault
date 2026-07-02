@@ -4,10 +4,14 @@ import asyncio
 import os
 from dataclasses import asdict
 
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from agents.matcher_agent import MatchRequest, MatcherAgent
 from agents.scraper_agent import ScrapeTarget, ScraperAgent
+from auth.dependencies import get_current_tenant
+from auth.scrape_quota import release_scrape_slots, reserve_scrape_slots
 from db import queries
 from models.schemas import MatchSearchRequest, ScrapeRunRequest, ScrapeTestRequest
 from routers import get_tenant
@@ -28,19 +32,51 @@ def _target_from_row(row: dict) -> ScrapeTarget:
 
 
 @router.post("/scrape/run")
-async def run_scrape(body: ScrapeRunRequest, tenant_id: str = Depends(get_tenant)) -> dict:
+async def run_scrape(
+    body: ScrapeRunRequest, tenant: dict = Depends(get_current_tenant)
+) -> dict:
+    tenant_id = tenant["id"]
     if body.tenant_id != tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Mandant stimmt nicht überein")
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="REDIS_URL ist nicht konfiguriert",
+        )
     rows = await queries.get_scrape_targets(tenant_id, body.competitor_product_ids)
-    semaphore = asyncio.Semaphore(int(os.getenv("SCRAPE_CONCURRENCY", "3")))
-    agent = ScraperAgent()
-
-    async def scrape_one(row: dict):
-        async with semaphore:
-            return await agent.scrape(_target_from_row(row))
-
-    results = await asyncio.gather(*(scrape_one(row) for row in rows))
-    return {"triggered": len(results), "results": [asdict(result) for result in results]}
+    redis = await create_pool(RedisSettings.from_dsn(redis_url))
+    reserved = 0
+    accepted = 0
+    try:
+        reserved = await reserve_scrape_slots(
+            redis,
+            tenant_id=tenant_id,
+            plan=tenant.get("plan"),
+            requested=len(rows),
+        )
+        if reserved < len(rows):
+            raise HTTPException(
+                status_code=429,
+                detail="Tageslimit für Preisabrufe erreicht",
+            )
+        jobs = []
+        for row in rows:
+            job = await redis.enqueue_job(
+                "scrape_target",
+                competitor_product_id=row["competitor_product_id"],
+                tenant_id=tenant_id,
+                quota_reserved=True,
+            )
+            jobs.append(job)
+            if job:
+                accepted += 1
+    finally:
+        await release_scrape_slots(
+            redis, tenant_id=tenant_id, count=max(0, reserved - accepted)
+        )
+        await redis.aclose()
+    return {"queued": len([job for job in jobs if job]), "triggered": len(rows)}
 
 
 @router.post("/scrape/test")
@@ -68,4 +104,3 @@ async def search_matches(body: MatchSearchRequest, tenant_id: str = Depends(get_
     request = MatchRequest(body.product_name, competitor["id"], competitor["base_url"])
     candidates = await MatcherAgent().search(request)
     return {"candidates": [asdict(candidate) for candidate in candidates]}
-

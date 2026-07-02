@@ -1,0 +1,56 @@
+"""ARQ worker settings and task registry."""
+
+import os
+
+from arq import cron
+from arq import create_pool
+from arq.connections import RedisSettings
+
+from jobs.alert_tasks import deliver_alert
+from jobs.billing_tasks import enqueue_due_viva_renewals, renew_viva_subscription
+from jobs.email_tasks import send_email
+from jobs.retry import send_to_dlq
+from jobs.scrape_tasks import scrape_all, scrape_product, scrape_target
+from logging_config import configure_logging
+
+
+configure_logging()
+
+
+def redis_settings() -> RedisSettings:
+    return RedisSettings.from_dsn(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+
+
+async def startup(ctx: dict) -> None:
+    ctx["redis"] = await create_pool(redis_settings())
+
+
+async def shutdown(ctx: dict) -> None:
+    redis = ctx.get("redis")
+    if redis:
+        await redis.aclose()
+
+
+class WorkerSettings:
+    functions = [
+        scrape_target,
+        scrape_product,
+        scrape_all,
+        send_to_dlq,
+        send_email,
+        deliver_alert,
+        enqueue_due_viva_renewals,
+        renew_viva_subscription,
+    ]
+    cron_jobs = [
+        cron(scrape_all, hour={0, 12}, minute=0, run_at_startup=False),
+        cron(enqueue_due_viva_renewals, hour=2, minute=15, run_at_startup=False),
+    ]
+    on_startup = startup
+    on_shutdown = shutdown
+    redis_settings = redis_settings()
+    max_jobs = int(os.environ.get("ARQ_MAX_JOBS", "10"))
+    job_timeout = int(os.environ.get("ARQ_JOB_TIMEOUT", "120"))
+    keep_result = 3600
+    retry_jobs = True
+    max_tries = int(os.environ.get("SCRAPE_MAX_ATTEMPTS", "3"))

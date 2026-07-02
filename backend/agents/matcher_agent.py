@@ -2,13 +2,17 @@
 
 import asyncio
 from dataclasses import dataclass
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
 
 from playwright.async_api import Page, async_playwright
 from rapidfuzz.fuzz import token_sort_ratio
 
 from db import queries
+from utils.logger import get_logger
 from utils.stealth import close_stealth_page, get_stealth_page, navigate_stealth
+
+
+logger = get_logger("matcher_agent")
 
 
 @dataclass
@@ -38,9 +42,13 @@ class MatcherAgent:
             title = (await anchor.inner_text()).strip()
             if not href or not title:
                 continue
-            host = urlparse(href).netloc.removeprefix("www.")
-            if host == base_host and href.startswith("http"):
-                links.append((href.split("#", 1)[0], " ".join(title.split())))
+            parsed_href = urlparse(href)
+            if parsed_href.path == "/url":
+                href = parse_qs(parsed_href.query).get("q", [href])[0]
+            absolute_url = urljoin(base_url, href)
+            host = urlparse(absolute_url).netloc.removeprefix("www.")
+            if host == base_host:
+                links.append((absolute_url.split("#", 1)[0], " ".join(title.split())))
         return links
 
     async def search(self, request: MatchRequest) -> list[MatchCandidate]:
@@ -87,17 +95,21 @@ class MatcherAgent:
 async def _main() -> None:
     tenants = await queries.list_tenants()
     if not tenants:
-        print("No tenant found")
+        logger.info("no_tenant_found", action="no_tenant_found")
         return
     competitors = await queries.list_competitors(tenants[0]["id"], active_only=True)
     if not competitors:
-        print("No active competitor found")
+        logger.info("no_active_competitor_found", action="no_active_competitor_found")
         return
     competitor = competitors[0]
     request = MatchRequest("Testprodukt", competitor["id"], competitor["base_url"])
-    print(await MatcherAgent().search(request))
+    candidates = await MatcherAgent().search(request)
+    logger.info(
+        "matcher_agent_complete",
+        action="matcher_agent_complete",
+        candidates=[candidate.__dict__ for candidate in candidates],
+    )
 
 
 if __name__ == "__main__":
     asyncio.run(_main())
-

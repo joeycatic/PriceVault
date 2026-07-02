@@ -5,9 +5,13 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from arq import create_pool
+from arq.connections import RedisSettings
 import resend
 
 from db import queries
+from emails.settings import app_url, resend_sender
+from jobs.alert_tasks import deliver_alert
 from utils.logger import get_logger
 
 
@@ -24,9 +28,9 @@ class AlertAgent:
         delta = float(row["delta_pct"])
         threshold = float(alert["threshold"])
         if alert["condition"] == "below_pct":
-            return delta > threshold
-        if alert["condition"] == "above_pct":
             return delta < -threshold
+        if alert["condition"] == "above_pct":
+            return delta > threshold
         if alert["condition"] == "below_abs":
             return float(row["our_price"]) - float(row["competitor_price"]) > threshold
         if alert["condition"] == "above_abs":
@@ -62,18 +66,46 @@ class AlertAgent:
             f"{float(row['competitor_price']):.2f} €.\n"
             f"Dein Preis: {float(row['our_price']):.2f} €\n"
             f"Differenz: {float(row['delta_pct']):.2f}%\n\n"
-            "→ Zum Dashboard: https://app.pricevault.de/dashboard\n\n"
+            f"→ Zum Dashboard: {app_url('/dashboard')}\n\n"
             "Du erhältst diese E-Mail, weil du einen Preisalarm für dieses Produkt "
             "eingerichtet hast."
         )
         await asyncio.to_thread(
             resend.Emails.send,
             {
-                "from": "PriceVault <alarme@pricevault.de>",
+                "from": resend_sender(),
                 "to": [alert["notify_email"]],
                 "subject": subject,
                 "text": text,
             },
+        )
+
+    async def _deliver_channels(self, tenant_id: str, row: dict[str, Any]) -> None:
+        channels = [
+            channel
+            for channel in await queries.list_alert_channels(tenant_id)
+            if channel.get("active") and channel.get("type") in {"webhook", "slack"}
+        ]
+        if not channels:
+            return
+        payload = {
+            "product_name": row["product_name"],
+            "old_price": float(row["our_price"] or 0),
+            "new_price": float(row["competitor_price"] or 0),
+            "delta_pct": float(row["delta_pct"] or 0),
+            "product_url": row["competitor_url"],
+        }
+        redis_url = os.environ.get("REDIS_URL")
+        if redis_url:
+            redis = await create_pool(RedisSettings.from_dsn(redis_url))
+            try:
+                for channel in channels:
+                    await redis.enqueue_job("deliver_alert", channel=channel, payload=payload)
+            finally:
+                await redis.aclose()
+            return
+        await asyncio.gather(
+            *(deliver_alert({}, channel=channel, payload=payload) for channel in channels)
         )
 
     async def run(self, tenant_id: str) -> dict[str, int]:
@@ -100,12 +132,18 @@ class AlertAgent:
                     email_sent = False
                     logger.error(
                         "email_failed",
-                        extra={
-                            "agent": "alert",
-                            "action": "email_failed",
-                            "tenant_id": tenant_id,
-                            "error": str(exc),
-                        },
+                        action="email_failed",
+                        tenant_id=tenant_id,
+                        error=str(exc),
+                    )
+                try:
+                    await self._deliver_channels(tenant_id, row)
+                except Exception as exc:
+                    logger.error(
+                        "channel_delivery_failed",
+                        action="channel_delivery_failed",
+                        tenant_id=tenant_id,
+                        error=str(exc),
                     )
 
                 now = datetime.now(timezone.utc).isoformat()
@@ -130,11 +168,11 @@ class AlertAgent:
 async def _main() -> None:
     tenants = await queries.list_tenants()
     if not tenants:
-        print("No tenant found")
+        logger.info("no_tenant_found", action="no_tenant_found")
         return
-    print(await AlertAgent().run(tenants[0]["id"]))
+    result = await AlertAgent().run(tenants[0]["id"])
+    logger.info("alert_agent_complete", action="alert_agent_complete", **result)
 
 
 if __name__ == "__main__":
     asyncio.run(_main())
-

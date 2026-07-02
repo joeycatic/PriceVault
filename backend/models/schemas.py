@@ -1,9 +1,11 @@
 """Request and response models for the FastAPI surface."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
+
+from security.urls import normalize_shopify_domain
 
 
 class APIModel(BaseModel):
@@ -36,7 +38,7 @@ class CompetitorCreate(APIModel):
 
 
 class CompetitorUpdate(APIModel):
-    shop_name: str | None = None
+    shop_name: str | None = Field(default=None, min_length=1)
     base_url: HttpUrl | None = None
     selector_price: str | None = None
     selector_stock: str | None = None
@@ -98,3 +100,39 @@ class ScrapeResultResponse(APIModel):
     error_msg: str | None
     scraped_at: datetime
 
+
+class BillingCheckoutRequest(APIModel):
+    plan: Literal["pro", "agency"]
+
+
+class APIKeyCreate(APIModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class AlertChannelCreate(APIModel):
+    type: Literal["webhook", "slack"]
+    config: dict[str, Any]
+
+
+class AlertChannelUpdate(APIModel):
+    active: bool | None = None
+    config: dict[str, Any] | None = None
+
+
+class TeamInviteRequest(APIModel):
+    email: EmailStr
+    role: Literal["admin", "member"] = "member"
+
+
+class ShopifyImportRequest(APIModel):
+    shop_domain: str = Field(min_length=3)
+    access_token: str = Field(min_length=8)
+
+    @field_validator("shop_domain")
+    @classmethod
+    def validate_shop_domain(cls, value: str) -> str:
+        return normalize_shopify_domain(value)
+
+
+class OnboardingSequenceRequest(APIModel):
+    email: EmailStr

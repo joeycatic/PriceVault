@@ -1,10 +1,12 @@
-"""Stealth-enabled Playwright browser factory."""
+"""Browserless Playwright page factory."""
 
 import asyncio
 import random
 
 from playwright.async_api import Page, Playwright
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
+
+from scrapers.stealth import STEALTH_HEADERS, browserless_ws_url
 
 
 USER_AGENTS = (
@@ -15,19 +17,21 @@ USER_AGENTS = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 )
+STEALTH = Stealth(navigator_languages_override=("de-DE", "de"))
 
 
 async def get_stealth_page(playwright: Playwright) -> Page:
-    """Create a German-localized Chromium page with stealth protections applied."""
-    browser = await playwright.chromium.launch(headless=True, slow_mo=50)
+    """Create a German-localized Browserless page with stealth protections applied."""
+    browser = await playwright.chromium.connect_over_cdp(browserless_ws_url())
     context = await browser.new_context(
         locale="de-DE",
         timezone_id="Europe/Berlin",
         viewport={"width": 1366, "height": 768},
         user_agent=random.choice(USER_AGENTS),
+        extra_http_headers=STEALTH_HEADERS,
     )
     page = await context.new_page()
-    await stealth_async(page)
+    await STEALTH.apply_stealth_async(page)
     return page
 
 
@@ -42,4 +46,3 @@ async def close_stealth_page(page: Page) -> None:
     browser = page.context.browser
     if browser:
         await browser.close()
-

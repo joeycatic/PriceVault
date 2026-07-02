@@ -1,61 +1,37 @@
-"""APScheduler jobs for twice-daily price collection."""
+"""Compatibility helpers for scheduling ARQ scrape jobs."""
 
-import asyncio
 import os
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from arq import create_pool
+from arq.connections import RedisSettings
 
-from agents.alert_agent import AlertAgent
-from agents.scraper_agent import ScrapeTarget, ScraperAgent
 from db import queries
-from utils.logger import get_logger
+from db.client import supabase_context
 
 
-logger = get_logger("scheduler")
-scheduler = AsyncIOScheduler(timezone="Europe/Berlin")
+async def enqueue_all_scrapes(redis_url: str | None = None) -> int:
+    """Queue one ARQ scrape job per active competitor product."""
+    redis = await create_pool(RedisSettings.from_dsn(redis_url or os.environ["REDIS_URL"]))
+    queued = 0
+    try:
+        with supabase_context(admin=True):
+            tenants = await queries.list_tenants()
+            for tenant in tenants:
+                rows = await queries.get_scrape_targets(tenant["id"])
+                for row in rows:
+                    job = await redis.enqueue_job(
+                        "scrape_target",
+                        competitor_product_id=row["competitor_product_id"],
+                        tenant_id=tenant["id"],
+                        quota_reserved=False,
+                    )
+                    if job:
+                        queued += 1
+    finally:
+        await redis.aclose()
+    return queued
 
 
-def _target_from_row(row: dict) -> ScrapeTarget:
-    return ScrapeTarget(
-        competitor_product_id=row["competitor_product_id"],
-        url=row["url"],
-        selector_price=row.get("selector_price"),
-        selector_stock=row.get("selector_stock"),
-        tenant_id=row["tenant_id"],
-        competitor_id=row.get("competitor_id"),
-    )
-
-
-@scheduler.scheduled_job(
-    "interval", hours=12, id="scrape_all", max_instances=1, coalesce=True
-)
 async def scrape_all_job() -> None:
-    tenants = await queries.list_tenants()
-    concurrency = asyncio.Semaphore(int(os.getenv("SCRAPE_CONCURRENCY", "3")))
-    scraper = ScraperAgent()
-    alerts = AlertAgent()
-
-    for tenant in tenants:
-        tenant_id = tenant["id"]
-        rows = await queries.get_scrape_targets(tenant_id)
-
-        async def scrape_one(row: dict) -> None:
-            async with concurrency:
-                await scraper.scrape(_target_from_row(row))
-
-        results = await asyncio.gather(
-            *(scrape_one(row) for row in rows), return_exceptions=True
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(
-                    "scheduled_scrape_failed",
-                    extra={
-                        "agent": "scheduler",
-                        "action": "scheduled_scrape_failed",
-                        "tenant_id": tenant_id,
-                        "error": str(result),
-                    },
-                )
-        await alerts.run(tenant_id)
-
+    """Legacy entry point retained for scripts that imported the old scheduler."""
+    await enqueue_all_scrapes()

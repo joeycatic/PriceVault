@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from auth.dependencies import get_current_tenant
+from auth.plan_guard import assert_plan_capacity
 from db import queries
 from models.schemas import AlertCreate, AlertUpdate
 from routers import get_tenant
@@ -16,12 +18,27 @@ async def list_all(tenant_id: str = Depends(get_tenant)) -> list[dict]:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create(body: AlertCreate, tenant_id: str = Depends(get_tenant)) -> dict:
+async def create(body: AlertCreate, tenant: dict = Depends(get_current_tenant)) -> dict:
+    tenant_id = tenant["id"]
+    if body.product_id and not await queries.get_product(tenant_id, body.product_id):
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    if body.competitor_id and not await queries.get_competitor(tenant_id, body.competitor_id):
+        raise HTTPException(status_code=404, detail="Mitbewerber nicht gefunden")
+    active_count = await queries.count_active_alerts(tenant_id)
+    assert_plan_capacity(tenant.get("plan"), "alerts", active_count)
     return await queries.create_alert(tenant_id, body.model_dump(mode="json"))
 
 
 @router.patch("/{alert_id}")
 async def update(alert_id: str, body: AlertUpdate, tenant_id: str = Depends(get_tenant)) -> dict:
+    if body.active is True:
+        current = await queries.get_alert(tenant_id, alert_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="Preisalarm nicht gefunden")
+        if not current.get("active", True):
+            tenant = await queries.get_tenant_by_id(tenant_id)
+            active_count = await queries.count_active_alerts(tenant_id)
+            assert_plan_capacity(tenant.get("plan") if tenant else None, "alerts", active_count)
     alert = await queries.update_alert(
         tenant_id, alert_id, body.model_dump(exclude_unset=True, mode="json")
     )
@@ -42,4 +59,3 @@ async def events(
     limit: int = Query(default=50, ge=1, le=200), tenant_id: str = Depends(get_tenant)
 ) -> list[dict]:
     return await queries.list_alert_events(tenant_id, limit)
-

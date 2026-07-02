@@ -12,6 +12,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from db import queries
+from scrapers.playwright_scraper import extract_price
 from utils.logger import get_logger
 from utils.price_parser import parse_price
 from utils.stealth import close_stealth_page, get_stealth_page, navigate_stealth
@@ -74,6 +75,15 @@ class ScraperAgent:
             "in_stock": payload.get("in_stock"),
         }
 
+    async def _extract_automatic(self, page) -> dict[str, Any]:
+        price = await extract_price(page)
+        if price is not None:
+            return {"price": price, "currency": "EUR", "in_stock": None}
+        if os.getenv("ANTHROPIC_API_KEY"):
+            page_text = await page.locator("body").inner_text(timeout=15_000)
+            return await self._extract_with_llm(page_text)
+        raise ValueError("No price found in structured data, metadata, or known price selectors")
+
     @staticmethod
     def _stock_from_text(value: str) -> bool:
         normalized = value.casefold()
@@ -98,8 +108,7 @@ class ScraperAgent:
                     price = parse_price(raw_price_text)
                     currency = "EUR"
                 else:
-                    page_text = await page.locator("body").inner_text(timeout=15_000)
-                    extracted = await self._extract_with_llm(page_text)
+                    extracted = await self._extract_automatic(page)
                     raw_price_text = None
                     price = extracted["price"]
                     currency = extracted["currency"]
@@ -126,12 +135,9 @@ class ScraperAgent:
 
         logger.error(
             "scrape_failed",
-            extra={
-                "agent": "scraper",
-                "action": "scrape_failed",
-                "tenant_id": target.tenant_id,
-                "error": error,
-            },
+            action="scrape_failed",
+            tenant_id=target.tenant_id,
+            error=error,
         )
         return ScrapeResult(
             competitor_product_id=target.competitor_product_id,
@@ -152,19 +158,23 @@ class ScraperAgent:
             snapshot["scraped_at"] = result.scraped_at.isoformat()
             await queries.insert_snapshot(snapshot)
             if target.competitor_id:
-                await queries.mark_competitor_scraped(target.competitor_id, result.scraped_at.isoformat())
+                await queries.mark_competitor_scraped(
+                    target.tenant_id,
+                    target.competitor_id,
+                    result.scraped_at.isoformat(),
+                )
         return result
 
 
 async def _main() -> None:
     rows = await queries.get_scrape_targets()
     if not rows:
-        print("No active scrape target found")
+        logger.info("no_active_scrape_target_found", action="no_active_scrape_target_found")
         return
     target = ScrapeTarget(**{key: rows[0][key] for key in ScrapeTarget.__dataclass_fields__})
-    print(await ScraperAgent().scrape(target))
+    result = await ScraperAgent().scrape(target)
+    logger.info("scraper_agent_complete", action="scraper_agent_complete", result=asdict(result))
 
 
 if __name__ == "__main__":
     asyncio.run(_main())
-
