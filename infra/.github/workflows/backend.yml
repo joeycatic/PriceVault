@@ -1,0 +1,92 @@
+name: Backend CI/CD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+      - "infra/.github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+      - "infra/.github/workflows/backend.yml"
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pricevault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pricevault"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: pip install -r backend/requirements.txt
+      - name: Dependency audit
+        run: |
+          pip install pip-audit==2.10.1
+          python -m pip_audit -r backend/requirements.txt --progress-spinner off
+      - name: Lint
+        run: cd backend && python -m compileall -q .
+      - name: Alembic graph
+        run: cd backend && python -m alembic -c db/alembic.ini heads
+      - name: Alembic migration smoke
+        run: cd backend && python -m verification.migration_smoke
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pricevault
+      - name: Test
+        run: cd backend && pytest -q
+        env:
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          REDIS_URL: redis://localhost:6379
+          CONNECTOR_ENCRYPTION_KEY: ci-connector-secret
+      - name: Coverage
+        run: |
+          cd backend
+          pytest --cov=. --cov-report=term-missing --cov-report=json -q
+          python -m verification.coverage_targets coverage.json
+        env:
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          REDIS_URL: redis://localhost:6379
+          CONNECTOR_ENCRYPTION_KEY: ci-connector-secret
+      - name: Install Railway CLI
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npm install --global @railway/cli@5.23.3
+      - name: Deploy backend to Railway
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: railway up --service pricevault-backend --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      - name: Deploy worker to Railway
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: railway up --service pricevault-worker --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

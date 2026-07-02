@@ -1,2 +1,10 @@
-# TODO: Phase 2 — production deployment configuration is intentionally deferred.
+[build]
+builder = "NIXPACKS"
+buildCommand = "cd backend && pip install -r requirements.txt"
 
+[deploy]
+startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

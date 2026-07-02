@@ -2,6 +2,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+.coverage
+coverage.json
+backend/.coverage
+backend/coverage.json
 backend/venv/
 backend/.venv/
 backend/.env
@@ -13,4 +17,3 @@ dashboard/.env.local
 .DS_Store
 .idea/
 .vscode/
-

@@ -4,16 +4,17 @@ PriceVault is a multi-tenant competitor price tracking SaaS for DACH e-commerce 
 
 ## Architecture
 
-- `backend/`: Python 3.12, FastAPI, Playwright, APScheduler, Supabase, Resend
+- `backend/`: Python 3.12, FastAPI, ARQ + Redis, Browserless Playwright, Supabase, Resend, Viva billing
 - `dashboard/`: Next.js 16 App Router, React 19, Tailwind CSS, Supabase Auth
-- `infra/`: database policy reference and a Phase 2 deployment placeholder
+- `infra/`: CI/CD workflow copies, Railway runtime config, and local Redis compose files
 
 ## Local setup
 
 ### Prerequisites
 - Python 3.12+
 - Node.js 20+
-- Playwright browsers: `playwright install chromium`
+- Browserless.io token for remote Playwright sessions
+- Redis for ARQ jobs
 - A Supabase project (free tier is fine)
 
 ### Backend
@@ -22,16 +23,24 @@ cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium
 cp .env.example .env
-# Fill in .env with your Supabase + Resend + Anthropic keys
-uvicorn main:app --reload --port 8000
+# Fill in the local-required values: Supabase, Redis, Browserless, and CONNECTOR_ENCRYPTION_KEY.
+# Resend, Viva, and Sentry can stay blank until you test those integrations.
+dotenv -f .env run -- uvicorn main:app --reload --port 8000
+```
+
+Run the worker in a second shell:
+
+```bash
+cd backend
+source .venv/bin/activate
+dotenv -f .env run -- arq jobs.worker.WorkerSettings
 ```
 
 ### Database
 ```bash
-# Run backend/db/schema.sql in the Supabase SQL editor
-# No migrations needed for Phase 1 — schema.sql is run once
+# Fresh project: run backend/db/schema.sql in the Supabase SQL editor
+# Existing project with DATABASE_URL: cd backend && alembic -c db/alembic.ini upgrade head
 ```
 
 In Supabase Auth, add `http://localhost:3000/api/auth/callback` as a redirect URL. New users create their tenant, first product, and first price source through the in-app onboarding flow after signing in.
@@ -45,13 +54,36 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-### Verify
+### Local verify
 - Backend: http://localhost:8000/docs (FastAPI auto-docs)
 - Dashboard: http://localhost:3000
 
-Run the local checks before deploying:
+Check that the local app is reachable:
 
 ```bash
-cd dashboard && npm run lint && npm run build
-cd ../backend && .venv/bin/python -m compileall -q .
+cd backend
+dotenv -f .env run -- python -m verification.local_readiness
 ```
+
+Run the local quality checks:
+
+```bash
+cd dashboard && npm audit --audit-level=moderate && npm run lint && npm run test && npm run build
+cd ../backend && .venv/bin/python -m compileall -q . && .venv/bin/python -m pip_audit -r requirements.txt --progress-spinner off && .venv/bin/python -m pytest -q
+.venv/bin/python -m pytest --cov=. --cov-report=term-missing --cov-report=json -q
+.venv/bin/python -m verification.coverage_targets coverage.json
+```
+
+Production readiness is separate. `verification.live_readiness` and
+`verification.deployment_readiness` intentionally require verified Resend/Viva
+credentials and remote GitHub/Railway/Vercel setup.
+
+## Railway services
+
+Deploy the repository as two Railway services sharing the same Redis and backend
+environment variables:
+
+- `pricevault-backend` uses `infra/railway.toml` and serves FastAPI.
+- `pricevault-worker` uses `infra/railway.worker.toml` and runs the ARQ worker/cron process.
+
+The backend workflow deploys both services after tests pass on `main`.
