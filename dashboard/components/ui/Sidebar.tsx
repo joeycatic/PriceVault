@@ -7,10 +7,10 @@ import {
   Building2,
   ChevronDown,
   Gauge,
+  LifeBuoy,
   Menu,
   Package,
   Radio,
-  ShieldCheck,
   Store,
   Users,
   X,
@@ -37,7 +37,7 @@ const monitorLinks = [
   { href: '/dashboard/usage', label: 'Nutzung', icon: Gauge },
 ]
 
-const supportLinks = [{ href: '/dashboard/admin', label: 'Support', icon: ShieldCheck }]
+const supportLinks = [{ href: '/dashboard/support', label: 'Support', icon: LifeBuoy }]
 const allLinks = [...primaryLinks, ...monitorLinks, ...supportLinks]
 
 function activeHref(pathname: string) {
@@ -51,7 +51,7 @@ function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigat
   const groups = [
     { label: 'Shop', links: primaryLinks },
     { label: 'Monitoring', links: monitorLinks },
-    { label: 'Intern', links: supportLinks },
+    { label: 'Hilfe', links: supportLinks },
   ]
 
   return (

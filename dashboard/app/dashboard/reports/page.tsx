@@ -9,29 +9,45 @@ import { createClient } from '@/lib/supabase/server'
 import type { LatestPrice } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
-async function createSchedule(formData: FormData) {
+import { ReportScheduleForm, type ReportActionState } from './ReportScheduleForm'
+
+function reportBackendError(action: string, error: unknown): ReportActionState {
+  console.error('[reports] backend request failed', { action, error })
+  return {
+    ok: false,
+    message: 'Der Backend-Dienst ist nicht erreichbar. Bitte versuche es in Kürze erneut.',
+  }
+}
+
+async function createSchedule(_state: ReportActionState, formData: FormData): Promise<ReportActionState> {
   'use server'
   const tenant = await currentTenant()
-  if (!tenant) return
+  if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
   if (!hasPlan(tenant.plan, 'pro') || !['owner', 'admin'].includes(tenant.membership_role ?? 'owner')) {
-    return
+    return { ok: false, message: 'Für diese Aktion fehlen Plan oder Berechtigung.' }
   }
   const recipients = String(formData.get('recipients') ?? '')
     .split(/[\n,;]/)
     .map((value) => value.trim())
     .filter(Boolean)
-  const response = await backendFetch('/report-schedules', tenant.id, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: String(formData.get('name') ?? '').trim(),
-      cadence: String(formData.get('cadence') ?? 'weekly'),
-      recipients,
-      include_csv: formData.get('include_csv') === 'on',
-      filters: {},
-    }),
-  })
-  if (!response.ok) return
+  let response: Response
+  try {
+    response = await backendFetch('/report-schedules', tenant.id, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: String(formData.get('name') ?? '').trim(),
+        cadence: String(formData.get('cadence') ?? 'weekly'),
+        recipients,
+        include_csv: formData.get('include_csv') === 'on',
+        filters: {},
+      }),
+    })
+  } catch (error) {
+    return reportBackendError('create_schedule', error)
+  }
+  if (!response.ok) return { ok: false, message: `Zeitplan konnte nicht gespeichert werden (${response.status}).` }
   revalidatePath('/dashboard/reports')
+  return { ok: true, message: 'Zeitplan gespeichert.' }
 }
 
 async function sendNow(formData: FormData) {
@@ -39,7 +55,12 @@ async function sendNow(formData: FormData) {
   const tenant = await currentTenant()
   if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
   const id = String(formData.get('id') ?? '')
-  const response = await backendFetch(`/report-schedules/${id}/send-now`, tenant.id, { method: 'POST' })
+  let response: Response
+  try {
+    response = await backendFetch(`/report-schedules/${id}/send-now`, tenant.id, { method: 'POST' })
+  } catch (error) {
+    return reportBackendError('send_now', error)
+  }
   if (!response.ok) return { ok: false, message: 'Report konnte nicht eingeplant werden.' }
   revalidatePath('/dashboard/reports')
   return { ok: true, message: 'Report wurde eingeplant.' }
@@ -50,7 +71,12 @@ async function deleteSchedule(formData: FormData) {
   const tenant = await currentTenant()
   if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
   const id = String(formData.get('id') ?? '')
-  const response = await backendFetch(`/report-schedules/${id}`, tenant.id, { method: 'DELETE' })
+  let response: Response
+  try {
+    response = await backendFetch(`/report-schedules/${id}`, tenant.id, { method: 'DELETE' })
+  } catch (error) {
+    return reportBackendError('delete_schedule', error)
+  }
   if (!response.ok) return { ok: false, message: 'Zeitplan konnte nicht gelöscht werden.' }
   revalidatePath('/dashboard/reports')
   return { ok: true, message: 'Zeitplan gelöscht.' }
@@ -149,30 +175,7 @@ export default async function ReportsPage() {
           <section className="panel p-5">
             <h2 className="text-base font-semibold">Geplante Reports</h2>
             {canManageReports ? (
-              <form action={createSchedule} className="mt-4 space-y-3 border-b border-vault-700 pb-5">
-                <label className="block">
-                  <span className="field-label">Name</span>
-                  <input className="field" name="name" placeholder="Wöchentlicher Preisreport" required />
-                </label>
-                <label className="block">
-                  <span className="field-label">Empfänger</span>
-                  <textarea className="field min-h-24" name="recipients" placeholder="einkauf@example.de" required />
-                </label>
-                <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-                  <label>
-                    <span className="field-label">Rhythmus</span>
-                    <select className="field" name="cadence" defaultValue="weekly">
-                      <option value="weekly">Wöchentlich</option>
-                      <option value="monthly">Monatlich</option>
-                    </select>
-                  </label>
-                  <label className="flex items-end gap-2 pb-3 text-sm text-vault-300">
-                    <input name="include_csv" type="checkbox" className="h-4 w-4" />
-                    CSV anhängen
-                  </label>
-                </div>
-                <button className="button-primary w-full">Zeitplan speichern</button>
-              </form>
+              <ReportScheduleForm action={createSchedule} />
             ) : (
               <p className="mt-4 text-sm text-vault-400">Geplante Reports können Owner und Admins ab dem Pro-Plan verwalten.</p>
             )}
