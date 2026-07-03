@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from auth.dependencies import get_current_tenant
 from auth.plan_guard import assert_plan_capacity, require_tenant_admin_from_header
 from db import queries
-from models.schemas import ProductCreate, ProductMappingCreate, ProductUpdate
+from models.schemas import (
+    ProductCreate,
+    ProductMappingCreate,
+    ProductUpdate,
+    ProductVariantCreate,
+    ProductVariantUpdate,
+)
 from routers import get_tenant
 from routers.audit import record_audit_event
 
@@ -24,6 +30,17 @@ async def create(body: ProductCreate, tenant: dict = Depends(get_current_tenant)
     active_count = await queries.count_active_products(tenant_id)
     assert_plan_capacity(tenant.get("plan"), "products", active_count)
     product = await queries.create_product(tenant_id, body.model_dump(mode="json"))
+    await queries.create_product_variant(
+        tenant_id,
+        product["id"],
+        {
+            "name": "Standard",
+            "sku": body.our_sku,
+            "our_price": body.our_price,
+            "currency": body.our_currency,
+            "is_default": True,
+        },
+    )
     await record_audit_event(
         tenant,
         action="product.created",
@@ -81,6 +98,41 @@ async def list_mappings(product_id: str, tenant_id: str = Depends(get_tenant)) -
     return await queries.list_product_mappings(tenant_id, product_id)
 
 
+@router.get("/{product_id}/variants")
+async def list_variants(product_id: str, tenant_id: str = Depends(get_tenant)) -> list[dict]:
+    if not await queries.get_product(tenant_id, product_id):
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    return await queries.list_product_variants(tenant_id, product_id)
+
+
+@router.post("/{product_id}/variants", status_code=status.HTTP_201_CREATED)
+async def create_variant(
+    product_id: str,
+    body: ProductVariantCreate,
+    tenant: dict = Depends(require_tenant_admin_from_header),
+) -> dict:
+    if not await queries.get_product(tenant["id"], product_id):
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+    return await queries.create_product_variant(
+        tenant["id"], product_id, body.model_dump(mode="json")
+    )
+
+
+@router.patch("/{product_id}/variants/{variant_id}")
+async def update_variant(
+    product_id: str,
+    variant_id: str,
+    body: ProductVariantUpdate,
+    tenant: dict = Depends(require_tenant_admin_from_header),
+) -> dict:
+    variant = await queries.get_product_variant(tenant["id"], variant_id)
+    if not variant or variant["product_id"] != product_id:
+        raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    return await queries.update_product_variant(
+        tenant["id"], variant_id, body.model_dump(exclude_unset=True, mode="json")
+    ) or {}
+
+
 @router.post("/{product_id}/mappings", status_code=status.HTTP_201_CREATED)
 async def create_mapping(
     product_id: str, body: ProductMappingCreate, tenant: dict = Depends(require_tenant_admin_from_header)
@@ -90,6 +142,9 @@ async def create_mapping(
         raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
     if not await queries.get_competitor(tenant_id, body.competitor_id):
         raise HTTPException(status_code=404, detail="Mitbewerber nicht gefunden")
+    variant = await queries.get_product_variant(tenant_id, body.variant_id)
+    if not variant or variant["product_id"] != product_id:
+        raise HTTPException(status_code=404, detail="Variante nicht gefunden")
     mapping = await queries.create_product_mapping(
         tenant_id, product_id, body.model_dump(mode="json")
     )

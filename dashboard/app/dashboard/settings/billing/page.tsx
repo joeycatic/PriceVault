@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
@@ -31,9 +32,9 @@ async function cancelSubscription() {
 }
 
 const plans = [
-  { id: 'free', name: 'Free', price: '0 EUR', scrapes: '50 Abrufe/Tag', products: '5 Produkte' },
-  { id: 'pro', name: 'Pro', price: '29 EUR', scrapes: '500 Abrufe/Tag', products: '50 Produkte' },
-  { id: 'agency', name: 'Agency', price: '99 EUR', scrapes: '5.000 Abrufe/Tag', products: 'Unbegrenzt' },
+  { id: 'free', name: 'Free', price: '0,00 €', gross: '0,00 € brutto', scrapes: '50 Abrufe/Tag', products: '5 Produkte' },
+  { id: 'pro', name: 'Pro', price: '29,00 € netto', gross: '34,51 € inkl. 19 % USt.', scrapes: '500 Abrufe/Tag', products: '50 Produkte' },
+  { id: 'agency', name: 'Agency', price: '99,00 € netto', gross: '117,81 € inkl. 19 % USt.', scrapes: '5.000 Abrufe/Tag', products: 'Unbegrenzt' },
 ]
 
 export default async function BillingPage() {
@@ -50,6 +51,26 @@ export default async function BillingPage() {
       .order('created_at', { ascending: false })
       .limit(12)
     : { data: [] }
+  const { data: invoices } = tenant
+    ? await supabase.from('billing_invoices').select('*').eq('tenant_id', tenant.id).order('issued_at', { ascending: false })
+    : { data: [] }
+
+  async function saveInvoiceDetails(formData: FormData) {
+    'use server'
+    if (!tenant || tenant.membership_role !== 'owner') return
+    const client = await createClient()
+    await client.from('tenants').update({
+      invoice_email: String(formData.get('invoice_email') ?? '').trim(),
+      vat_id: String(formData.get('vat_id') ?? '').trim() || null,
+      billing_address: {
+        street: String(formData.get('street') ?? '').trim(),
+        postal_code: String(formData.get('postal_code') ?? '').trim(),
+        city: String(formData.get('city') ?? '').trim(),
+        country: 'Deutschland',
+      },
+    }).eq('id', tenant.id).eq('user_id', tenant.user_id)
+    revalidatePath('/dashboard/settings/billing')
+  }
 
   return (
     <>
@@ -66,6 +87,7 @@ export default async function BillingPage() {
               <div>
                 <p className="eyebrow">{plan.name}</p>
                 <h2 className="mt-3 text-3xl font-bold">{plan.price}</h2>
+                <p className="mt-1 text-xs text-vault-500">{plan.gross}</p>
               </div>
               {currentPlan === plan.id && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-merchant-success">Aktiv</span>}
             </div>
@@ -126,6 +148,21 @@ export default async function BillingPage() {
         Aktuelles Tageslimit: {currentLimits.scrapesPerDay.toLocaleString('de-DE')} Preisabrufe.
       </p>
 
+      {canManageBilling && tenant && (
+        <section className="panel mt-6 p-5" aria-labelledby="invoice-details">
+          <p className="eyebrow">Rechnungsdaten</p>
+          <h2 id="invoice-details" className="mt-2 font-semibold">Empfänger und Anschrift</h2>
+          <form action={saveInvoiceDetails} className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label><span className="field-label">Rechnungs-E-Mail</span><input className="field" name="invoice_email" type="email" required defaultValue={tenant.invoice_email ?? ''} /></label>
+            <label><span className="field-label">USt-IdNr. (optional)</span><input className="field" name="vat_id" defaultValue={tenant.vat_id ?? ''} /></label>
+            <label className="sm:col-span-2"><span className="field-label">Straße und Hausnummer</span><input className="field" name="street" required defaultValue={tenant.billing_address?.street ?? ''} /></label>
+            <label><span className="field-label">Postleitzahl</span><input className="field" name="postal_code" required defaultValue={tenant.billing_address?.postal_code ?? ''} /></label>
+            <label><span className="field-label">Ort</span><input className="field" name="city" required defaultValue={tenant.billing_address?.city ?? ''} /></label>
+            <div className="sm:col-span-2"><button className="button-secondary">Rechnungsdaten speichern</button></div>
+          </form>
+        </section>
+      )}
+
       <section className="panel mt-6 overflow-hidden">
         <div className="border-b border-vault-700 px-5 py-4 font-semibold">Abrechnungshistorie</div>
         <div className="divide-y divide-vault-700/70">
@@ -142,6 +179,18 @@ export default async function BillingPage() {
             </article>
           ))}
           {!(orders ?? []).length && <p className="p-5 text-sm text-vault-400">Noch keine Viva-Bestellungen gespeichert.</p>}
+        </div>
+      </section>
+      <section className="panel mt-6 overflow-hidden">
+        <div className="border-b border-vault-700 px-5 py-4 font-semibold">Rechnungen</div>
+        <div className="divide-y divide-vault-700/70">
+          {(invoices ?? []).map((invoice) => (
+            <article key={invoice.id} className="flex flex-col gap-3 p-5 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <div><p className="font-semibold">{invoice.invoice_number}</p><p className="mt-1 text-xs text-vault-500">{(invoice.net_amount_cents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })} netto · {(invoice.vat_amount_cents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })} USt.</p></div>
+              <a className="button-secondary" href={`/api/billing/invoices/${invoice.id}`}>PDF</a>
+            </article>
+          ))}
+          {!(invoices ?? []).length && <p className="p-5 text-sm text-vault-400">Noch keine Rechnungen vorhanden.</p>}
         </div>
       </section>
     </>

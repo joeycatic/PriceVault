@@ -17,7 +17,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from db.client import check_supabase_admin_connection
 from jobs.worker_status import worker_autoscaling_signals
 from middleware.rate_limit import TenantPlanRateLimitMiddleware, limiter
-from routers import admin, alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, privacy, products, reports, scrape, settings, snapshots, team, webhooks
+from routers import admin, alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, privacy, products, repricing, reports, scrape, settings, snapshots, team, webhooks
 from routers.connectors import shopify, sources
 from utils.logger import configure_logging, get_logger
 
@@ -44,6 +44,7 @@ app.add_middleware(TenantPlanRateLimitMiddleware)
 app.include_router(scrape.router)
 app.include_router(competitors.router)
 app.include_router(products.router)
+app.include_router(repricing.router)
 app.include_router(snapshots.router)
 app.include_router(alerts.router)
 app.include_router(onboarding.router)

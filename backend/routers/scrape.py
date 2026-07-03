@@ -4,6 +4,7 @@ import asyncio
 import os
 from contextlib import suppress
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -15,8 +16,15 @@ from auth.dependencies import get_current_tenant
 from auth.plan_guard import require_tenant_admin
 from auth.scrape_quota import release_scrape_slots, reserve_scrape_slots
 from db import queries
-from models.schemas import MatchSearchRequest, ProductMappingRepair, ScrapeRunRequest, ScrapeTestRequest
+from models.schemas import (
+    MatchSearchRequest,
+    MatchSuggestionGenerateRequest,
+    ProductMappingRepair,
+    ScrapeRunRequest,
+    ScrapeTestRequest,
+)
 from routers import get_tenant
+from routers.audit import record_audit_event
 
 
 router = APIRouter(tags=["scraping"])
@@ -177,3 +185,140 @@ async def search_matches(body: MatchSearchRequest, tenant_id: str = Depends(get_
     request = MatchRequest(body.product_name, competitor["id"], competitor["base_url"])
     candidates = await MatcherAgent().search(request)
     return {"candidates": [asdict(candidate) for candidate in candidates]}
+
+
+@router.get("/match/suggestions")
+async def list_match_suggestions(
+    match_status: str = Query(default="pending", alias="status", pattern="^(pending|approved|rejected)$"),
+    tenant_id: str = Depends(get_tenant),
+) -> list[dict]:
+    return await queries.list_match_suggestions(tenant_id, match_status)
+
+
+@router.post("/match/suggestions/generate", status_code=status.HTTP_201_CREATED)
+async def generate_match_suggestions(
+    body: MatchSuggestionGenerateRequest,
+    tenant: dict = Depends(require_tenant_admin),
+) -> list[dict]:
+    tenant_id = tenant["id"]
+    variant = await queries.get_product_variant(tenant_id, body.variant_id)
+    competitor = await queries.get_competitor(tenant_id, body.competitor_id)
+    if not variant:
+        raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    if not competitor:
+        raise HTTPException(status_code=404, detail="Mitbewerber nicht gefunden")
+    if await queries.get_mapping_for_variant_competitor(
+        tenant_id, body.variant_id, body.competitor_id
+    ):
+        raise HTTPException(status_code=409, detail="Diese Variante ist bereits zugeordnet")
+    product = await queries.get_product(tenant_id, variant["product_id"])
+    if not product:
+        raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
+
+    display_name = " ".join(
+        part for part in (product["name"], variant.get("name")) if part and part != "Standard"
+    )
+    candidates = await MatcherAgent().search(
+        MatchRequest(
+            display_name,
+            competitor["id"],
+            competitor["base_url"],
+            gtin=variant.get("gtin"),
+        )
+    )
+    method = "gtin" if variant.get("gtin") else "fuzzy"
+    await queries.create_match_suggestions(
+        [
+            {
+                "tenant_id": tenant_id,
+                "product_id": product["id"],
+                "variant_id": variant["id"],
+                "competitor_id": competitor["id"],
+                "candidate_url": candidate.url,
+                "candidate_title": candidate.title,
+                "confidence": candidate.confidence,
+                "match_method": method,
+            }
+            for candidate in candidates
+        ]
+    )
+    return await queries.list_match_suggestions(
+        tenant_id,
+        "pending",
+        variant_id=body.variant_id,
+        competitor_id=body.competitor_id,
+    )
+
+
+@router.post("/match/suggestions/{suggestion_id}/approve")
+async def approve_match_suggestion(
+    suggestion_id: str,
+    tenant: dict = Depends(require_tenant_admin),
+) -> dict:
+    tenant_id = tenant["id"]
+    suggestion = await queries.get_match_suggestion(tenant_id, suggestion_id)
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
+    if suggestion["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Vorschlag wurde bereits bearbeitet")
+    mapping = await queries.get_mapping_for_variant_competitor(
+        tenant_id, suggestion["variant_id"], suggestion["competitor_id"]
+    )
+    if not mapping:
+        mapping = await queries.create_product_mapping(
+            tenant_id,
+            suggestion["product_id"],
+            {
+                "variant_id": suggestion["variant_id"],
+                "competitor_id": suggestion["competitor_id"],
+                "competitor_url": suggestion["candidate_url"],
+            },
+        )
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    await queries.update_match_suggestion(
+        tenant_id,
+        suggestion_id,
+        {
+            "status": "approved",
+            "mapping_id": mapping["id"],
+            "reviewed_by": tenant.get("_actor_user_id") or tenant.get("user_id"),
+            "reviewed_at": reviewed_at,
+        },
+    )
+    await record_audit_event(
+        tenant,
+        action="match_suggestion.approved",
+        resource_type="match_suggestion",
+        resource_id=suggestion_id,
+        metadata={"mapping_id": mapping["id"]},
+    )
+    return {"suggestion_id": suggestion_id, "mapping": mapping}
+
+
+@router.post("/match/suggestions/{suggestion_id}/reject")
+async def reject_match_suggestion(
+    suggestion_id: str,
+    tenant: dict = Depends(require_tenant_admin),
+) -> dict:
+    tenant_id = tenant["id"]
+    suggestion = await queries.get_match_suggestion(tenant_id, suggestion_id)
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
+    if suggestion["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Vorschlag wurde bereits bearbeitet")
+    updated = await queries.update_match_suggestion(
+        tenant_id,
+        suggestion_id,
+        {
+            "status": "rejected",
+            "reviewed_by": tenant.get("_actor_user_id") or tenant.get("user_id"),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    await record_audit_event(
+        tenant,
+        action="match_suggestion.rejected",
+        resource_type="match_suggestion",
+        resource_id=suggestion_id,
+    )
+    return updated or {"id": suggestion_id, "status": "rejected"}

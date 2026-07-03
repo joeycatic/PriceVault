@@ -28,13 +28,34 @@ def test_create_payment_order_uses_recurring_smart_checkout(monkeypatch):
 
     assert code == 1234567890123456
     assert captured["url"] == "https://demo-api.vivapayments.com/checkout/v2/orders"
-    assert captured["json"]["amount"] == 2900
+    assert captured["json"]["amount"] == 3451
     assert captured["json"]["allowRecurring"] is True
     assert captured["json"]["sourceCode"] == "1234"
     assert captured["json"]["customer"] == {
         "email": "owner@example.com",
         "requestLang": "de-DE",
     }
+
+
+def test_invoice_pdf_contains_vat_totals():
+    from payments.invoices import render_invoice_pdf
+
+    pdf = render_invoice_pdf(
+        {
+            "invoice_number": "PV-2026-ABC",
+            "plan": "pro",
+            "net_amount_cents": 2900,
+            "vat_rate": 19,
+            "vat_amount_cents": 551,
+            "gross_amount_cents": 3451,
+            "issued_at": "2026-07-03T12:00:00+00:00",
+            "seller_snapshot": {"name": "PriceVault GmbH", "address": "Berlin", "vat_id": "DE123"},
+            "customer_snapshot": {"name": "Kunde GmbH", "address": {"street": "Straße 1", "postal_code": "10115", "city": "Berlin"}},
+        }
+    )
+
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 1000
 
 
 def test_create_recurring_payment_uses_idempotency_key(monkeypatch):

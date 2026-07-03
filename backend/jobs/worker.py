@@ -2,14 +2,15 @@
 
 import os
 
-from arq import cron
 from arq import create_pool
 from arq.connections import RedisSettings
 
 from jobs.alert_tasks import deliver_alert
 from jobs.billing_tasks import enqueue_due_viva_renewals, renew_viva_subscription
 from jobs.connector_tasks import sync_connector_run
+from jobs.digest_tasks import enqueue_due_alert_digests, send_alert_digest
 from jobs.email_tasks import send_email
+from jobs.insight_tasks import generate_product_insight
 from jobs.report_tasks import enqueue_due_reports, send_report_run
 from jobs.retry import send_to_dlq
 from jobs.scrape_tasks import scrape_all, scrape_product, scrape_target
@@ -46,11 +47,9 @@ class WorkerSettings:
         enqueue_due_reports,
         send_report_run,
         sync_connector_run,
-    ]
-    cron_jobs = [
-        cron(scrape_all, hour={0, 12}, minute=0, run_at_startup=False),
-        cron(enqueue_due_viva_renewals, hour=2, minute=15, run_at_startup=False),
-        cron(enqueue_due_reports, hour=6, minute=30, run_at_startup=False),
+        enqueue_due_alert_digests,
+        send_alert_digest,
+        generate_product_insight,
     ]
     on_startup = startup
     on_shutdown = shutdown

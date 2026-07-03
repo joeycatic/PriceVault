@@ -5,8 +5,10 @@ import {
   BarChart3,
   Bell,
   Building2,
+  BadgeEuro,
   ChevronDown,
   Gauge,
+  HeartPulse,
   LifeBuoy,
   Menu,
   Package,
@@ -30,7 +32,9 @@ const primaryLinks = [
 ]
 
 const monitorLinks = [
+  { href: '/dashboard/source-health', label: 'Quellenstatus', icon: HeartPulse },
   { href: '/dashboard/alerts', label: 'Preisalarme', icon: Bell },
+  { href: '/dashboard/repricing', label: 'Preisvorschläge', icon: BadgeEuro },
   { href: '/dashboard/alerts/channels', label: 'Kanäle', icon: Radio },
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
   { href: '/dashboard/scrapes', label: 'Scrape-Jobs', icon: Activity },

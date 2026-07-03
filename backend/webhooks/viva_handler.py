@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 from db import queries
 from db.client import supabase_context
 from payments import viva
+from payments.invoices import create_paid_invoice
 
 
 def _value(payload: dict[str, Any], name: str) -> Any:
@@ -76,6 +77,16 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
     now = datetime.now(timezone.utc)
     source_code = str(_value(transaction, "sourceCode") or _value(event, "sourceCode") or "")
     with supabase_context(admin=True):
+        tenant = await queries.get_tenant_by_id(order["tenant_id"])
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Mandant nicht gefunden")
+        await create_paid_invoice(
+            tenant=tenant,
+            plan=order["plan"],
+            transaction_id=str(transaction_id),
+            paid_at=now.isoformat(),
+            billing_order_id=order.get("id"),
+        )
         await queries.update_billing_order(
             int(order_code),
             {"status": "paid", "transaction_id": transaction_id, "paid_at": now.isoformat()},

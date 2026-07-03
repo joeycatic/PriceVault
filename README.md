@@ -37,10 +37,18 @@ source .venv/bin/activate
 dotenv -f .env run -- arq jobs.worker.WorkerSettings
 ```
 
+Run APScheduler in a third shell. It checks due price sources every minute and dispatches billing and report jobs at their configured UTC times:
+
+```bash
+cd backend
+source .venv/bin/activate
+dotenv -f .env run -- python scheduler.py
+```
+
 ### Database
 ```bash
 # Fresh project: run backend/db/schema.sql in the Supabase SQL editor
-# Existing project with DATABASE_URL: cd backend && alembic -c db/alembic.ini upgrade head
+# Existing project: review and apply the idempotent additions in backend/db/schema.sql via the SQL editor
 ```
 
 In Supabase Auth, add `http://localhost:3000/api/auth/callback` as a redirect URL. New users create their tenant, first product, and first price source through the in-app onboarding flow after signing in.
@@ -82,10 +90,11 @@ credentials and remote GitHub/Railway/Vercel setup.
 
 ## Railway services
 
-Deploy the repository as two Railway services sharing the same Redis and backend
+Deploy the repository as three Railway services sharing the same Redis and backend
 environment variables:
 
 - `pricevault-backend` uses `infra/railway.toml` and serves FastAPI.
-- `pricevault-worker` uses `infra/railway.worker.toml` and runs the ARQ worker/cron process.
+- `pricevault-worker` uses `infra/railway.worker.toml` and runs the ARQ worker.
+- `pricevault-scheduler` uses `infra/railway.scheduler.toml` and dispatches recurring work.
 
-The backend workflow deploys both services after tests pass on `main`.
+The backend workflow deploys the configured services after tests pass on `main`.

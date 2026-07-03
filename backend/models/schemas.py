@@ -28,6 +28,11 @@ class MatchSearchRequest(APIModel):
     competitor_id: str
 
 
+class MatchSuggestionGenerateRequest(APIModel):
+    variant_id: str
+    competitor_id: str
+
+
 class CompetitorCreate(APIModel):
     shop_name: str = Field(min_length=1)
     base_url: HttpUrl
@@ -61,8 +66,32 @@ class ProductUpdate(APIModel):
     active: bool | None = None
 
 
+class ProductVariantCreate(APIModel):
+    name: str = Field(default="Standard", min_length=1, max_length=120)
+    sku: str | None = Field(default=None, max_length=120)
+    gtin: str | None = Field(default=None, pattern=r"^\d{8}(?:\d{4,6})?$")
+    attributes: dict[str, str] = Field(default_factory=dict)
+    our_price: float | None = Field(default=None, ge=0)
+    cost_price: float | None = Field(default=None, ge=0)
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
+    is_default: bool = False
+
+
+class ProductVariantUpdate(APIModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    sku: str | None = Field(default=None, max_length=120)
+    gtin: str | None = Field(default=None, pattern=r"^\d{8}(?:\d{4,6})?$")
+    attributes: dict[str, str] | None = None
+    our_price: float | None = Field(default=None, ge=0)
+    cost_price: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    is_default: bool | None = None
+    active: bool | None = None
+
+
 class ProductMappingCreate(APIModel):
     competitor_id: str
+    variant_id: str
     competitor_url: HttpUrl
     competitor_sku: str | None = None
     selector_price: str | None = None
@@ -74,6 +103,23 @@ class ProductMappingRepair(APIModel):
     selector_stock: str | None = None
 
 
+class RepricingRuleCreate(APIModel):
+    name: str = Field(min_length=1, max_length=120)
+    strategy: Literal["match_lowest", "beat_percent"]
+    beat_by_pct: float = Field(default=0, ge=0, le=50)
+    min_margin_pct: float = Field(ge=0, le=500)
+    product_id: str | None = None
+    variant_id: str | None = None
+
+
+class RepricingRuleUpdate(APIModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    strategy: Literal["match_lowest", "beat_percent"] | None = None
+    beat_by_pct: float | None = Field(default=None, ge=0, le=50)
+    min_margin_pct: float | None = Field(default=None, ge=0, le=500)
+    active: bool | None = None
+
+
 AlertCondition = Literal[
     "below_pct",
     "above_pct",
@@ -82,6 +128,9 @@ AlertCondition = Literal[
     "out_of_stock",
     "back_in_stock",
     "undercut_abs",
+    "price_drop",
+    "price_rise",
+    "source_broken",
 ]
 
 
@@ -90,6 +139,7 @@ class AlertCreate(APIModel):
     competitor_id: str | None = None
     condition: AlertCondition
     threshold: float | None = Field(default=None, gt=0)
+    threshold_unit: Literal["percent", "absolute"] = "percent"
     notify_email: EmailStr
     cooldown_h: int = Field(default=24, ge=1, le=720)
 
@@ -99,6 +149,7 @@ class AlertUpdate(APIModel):
     competitor_id: str | None = None
     condition: AlertCondition | None = None
     threshold: float | None = Field(default=None, gt=0)
+    threshold_unit: Literal["percent", "absolute"] | None = None
     notify_email: EmailStr | None = None
     active: bool | None = None
     cooldown_h: int | None = Field(default=None, ge=1, le=720)
@@ -158,6 +209,7 @@ class TenantSettingsUpdate(APIModel):
     default_scrape_freq_h: int | None = Field(default=None, ge=1, le=168)
     invoice_email: EmailStr | None = None
     vat_id: str | None = Field(default=None, max_length=40)
+    billing_address: dict[str, str] | None = None
     notification_defaults: dict[str, Any] | None = None
     activation_state: dict[str, Any] | None = None
 

@@ -9,15 +9,16 @@ from routers import get_tenant
 
 PLAN_RANK = {"free": 0, "trial": 0, "starter": 1, "pro": 1, "agency": 2}
 PLAN_LIMITS: dict[str, dict[str, int | None]] = {
-    "free": {"scrapes_per_day": 50, "products": 5, "alerts": 3, "seats": 1},
-    "trial": {"scrapes_per_day": 50, "products": 5, "alerts": 3, "seats": 1},
-    "starter": {"scrapes_per_day": 500, "products": 50, "alerts": None, "seats": 1},
-    "pro": {"scrapes_per_day": 500, "products": 50, "alerts": None, "seats": 1},
-    "agency": {"scrapes_per_day": 5000, "products": None, "alerts": None, "seats": 5},
+    "free": {"scrapes_per_day": 50, "products": 5, "competitors": 2, "alerts": 3, "seats": 1},
+    "trial": {"scrapes_per_day": 50, "products": 5, "competitors": 2, "alerts": 3, "seats": 1},
+    "starter": {"scrapes_per_day": 500, "products": 50, "competitors": 10, "alerts": None, "seats": 1},
+    "pro": {"scrapes_per_day": 500, "products": 50, "competitors": 10, "alerts": None, "seats": 1},
+    "agency": {"scrapes_per_day": 5000, "products": None, "competitors": None, "alerts": None, "seats": 5},
 }
-RESOURCE_LABELS = {"products": "aktive Produkte", "alerts": "aktive Preisalarme", "seats": "Team-Sitze"}
+RESOURCE_LABELS = {"products": "aktive Produkte", "competitors": "aktive Mitbewerber", "alerts": "aktive Preisalarme", "seats": "Team-Sitze"}
 ADMIN_ROLES = {"owner", "admin"}
 BILLING_ROLES = {"owner", "admin", "billing"}
+MIN_SCRAPE_FREQUENCY_H = {"free": 12, "trial": 12, "starter": 6, "pro": 6, "agency": 1}
 
 
 def plan_limit(plan: str | None, resource: str) -> int | None:
@@ -32,6 +33,15 @@ def assert_plan_capacity(
         raise HTTPException(
             status_code=403,
             detail=f"Dein Plan erlaubt maximal {limit} {RESOURCE_LABELS.get(resource, resource)}.",
+        )
+
+
+def assert_scrape_frequency(plan: str | None, frequency_h: int) -> None:
+    minimum = MIN_SCRAPE_FREQUENCY_H.get(plan or "free", 12)
+    if frequency_h < minimum:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Dein Plan erlaubt Abrufintervalle ab {minimum} Stunden.",
         )
 
 

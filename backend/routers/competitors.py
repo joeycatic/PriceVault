@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from auth.plan_guard import require_tenant_admin_from_header
+from auth.plan_guard import assert_plan_capacity, assert_scrape_frequency, require_tenant_admin_from_header
 from db import queries
 from models.schemas import CompetitorCreate, CompetitorUpdate
 from routers import get_tenant
@@ -19,6 +19,9 @@ async def list_all(tenant_id: str = Depends(get_tenant)) -> list[dict]:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create(body: CompetitorCreate, tenant: dict = Depends(require_tenant_admin_from_header)) -> dict:
+    assert_scrape_frequency(tenant.get("plan"), body.scrape_freq_h)
+    active_count = await queries.count_active_competitors(tenant["id"])
+    assert_plan_capacity(tenant.get("plan"), "competitors", active_count)
     competitor = await queries.create_competitor(tenant["id"], body.model_dump(mode="json"))
     await record_audit_event(
         tenant,
@@ -42,6 +45,8 @@ async def get_one(competitor_id: str, tenant_id: str = Depends(get_tenant)) -> d
 async def update(
     competitor_id: str, body: CompetitorUpdate, tenant: dict = Depends(require_tenant_admin_from_header)
 ) -> dict:
+    if body.scrape_freq_h is not None:
+        assert_scrape_frequency(tenant.get("plan"), body.scrape_freq_h)
     competitor = await queries.update_competitor(
         tenant["id"], competitor_id, body.model_dump(exclude_unset=True, mode="json")
     )

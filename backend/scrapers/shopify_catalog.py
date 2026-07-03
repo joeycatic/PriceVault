@@ -20,13 +20,17 @@ async def fetch_shopify_products(
             payload = response.json()
             for product in payload.get("products", []):
                 yield {
+                    "id": str(product["id"]),
                     "title": product["title"],
                     "handle": product["handle"],
                     "url": f"https://{normalized_domain}/products/{product['handle']}",
                     "variants": [
                         {
+                            "id": str(variant["id"]),
+                            "title": variant.get("title") or "Standard",
                             "price": float(variant["price"]),
                             "sku": variant.get("sku") or None,
+                            "gtin": variant.get("barcode") or None,
                         }
                         for variant in product.get("variants", [])
                     ],

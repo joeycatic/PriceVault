@@ -11,20 +11,37 @@ function urgencyScore(row: LatestPrice) {
 }
 
 export function PriceTable({ rows }: { rows: LatestPrice[] }) {
+  const [query, setQuery] = useState('')
+  const [availability, setAvailability] = useState('all')
+  const [sort, setSort] = useState('attention')
   const groups = useMemo(() => {
     const grouped = new Map<string, LatestPrice[]>()
-    rows.forEach((row) => {
+    const normalizedQuery = query.trim().toLocaleLowerCase('de-DE')
+    rows.filter((row) => {
+      const matchesQuery = !normalizedQuery || `${row.product_name} ${row.variant_name ?? ''} ${row.competitor_shop}`.toLocaleLowerCase('de-DE').includes(normalizedQuery)
+      const matchesAvailability = availability === 'all'
+        || (availability === 'available' && row.in_stock === true)
+        || (availability === 'unavailable' && row.in_stock === false)
+        || (availability === 'unknown' && row.in_stock === null)
+      return matchesQuery && matchesAvailability
+    }).forEach((row) => {
       const current = grouped.get(row.product_id) ?? []
       current.push(row)
       grouped.set(row.product_id, current)
     })
+    const compare = (a: LatestPrice, b: LatestPrice) => {
+      if (sort === 'price-asc') return Number(a.competitor_price ?? Infinity) - Number(b.competitor_price ?? Infinity)
+      if (sort === 'price-desc') return Number(b.competitor_price ?? -Infinity) - Number(a.competitor_price ?? -Infinity)
+      if (sort === 'newest') return Date.parse(b.scraped_at ?? '1970-01-01') - Date.parse(a.scraped_at ?? '1970-01-01')
+      return urgencyScore(a) - urgencyScore(b)
+    }
     return Array.from(grouped.entries())
       .map(([productId, entries]) => ({
         productId,
-        entries: entries.sort((a, b) => urgencyScore(a) - urgencyScore(b)),
+        entries: entries.sort(compare),
       }))
-      .sort((a, b) => urgencyScore(a.entries[0]) - urgencyScore(b.entries[0]))
-  }, [rows])
+      .sort((a, b) => compare(a.entries[0], b.entries[0]))
+  }, [availability, query, rows, sort])
 
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(groups.map((group) => group.productId)),
@@ -55,6 +72,31 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
 
   return (
     <div className="panel overflow-hidden">
+      <div className="grid gap-3 border-b border-vault-700 p-4 md:grid-cols-[minmax(220px,1fr)_190px_220px]">
+        <label>
+          <span className="sr-only">Produkte und Mitbewerber filtern</span>
+          <input className="field" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Produkt oder Mitbewerber suchen" />
+        </label>
+        <label>
+          <span className="sr-only">Bestandsstatus filtern</span>
+          <select className="field" value={availability} onChange={(event) => setAvailability(event.target.value)}>
+            <option value="all">Alle Bestände</option>
+            <option value="available">Verfügbar</option>
+            <option value="unavailable">Nicht verfügbar</option>
+            <option value="unknown">Unbekannt</option>
+          </select>
+        </label>
+        <label>
+          <span className="sr-only">Tabelle sortieren</span>
+          <select className="field" value={sort} onChange={(event) => setSort(event.target.value)}>
+            <option value="attention">Größter Handlungsbedarf</option>
+            <option value="price-asc">Mitbewerberpreis aufsteigend</option>
+            <option value="price-desc">Mitbewerberpreis absteigend</option>
+            <option value="newest">Neuester Abruf</option>
+          </select>
+        </label>
+      </div>
+      {!groups.length && <p className="p-6 text-sm text-vault-400">Keine Preisposition passt zu den gewählten Filtern.</p>}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse text-left">
           <thead>

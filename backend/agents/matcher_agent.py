@@ -20,6 +20,7 @@ class MatchRequest:
     product_name: str
     competitor_id: str
     competitor_base_url: str
+    gtin: str | None = None
 
 
 @dataclass
@@ -60,7 +61,7 @@ class MatcherAgent:
                 internal_url = (
                     request.competitor_base_url.rstrip("/")
                     + "/search?q="
-                    + quote_plus(request.product_name)
+                    + quote_plus(request.gtin or request.product_name)
                 )
                 try:
                     await navigate_stealth(page, internal_url)
@@ -70,7 +71,7 @@ class MatcherAgent:
 
                 if not links:
                     query = quote_plus(
-                        f"site:{request.competitor_base_url} {request.product_name}"
+                        f"site:{request.competitor_base_url} {request.gtin or request.product_name}"
                     )
                     await navigate_stealth(page, f"https://www.google.com/search?q={query}")
                     links = await self._extract_links(page, request.competitor_base_url)
@@ -81,14 +82,13 @@ class MatcherAgent:
         deduplicated: dict[str, str] = {}
         for url, title in links:
             deduplicated.setdefault(url, title)
-        candidates = [
-            MatchCandidate(
-                url=url,
-                title=title,
-                confidence=round(token_sort_ratio(request.product_name, title) / 100, 3),
+        candidates = []
+        for url, title in deduplicated.items():
+            exact_gtin = bool(request.gtin and request.gtin in f"{url} {title}")
+            confidence = 1.0 if exact_gtin else token_sort_ratio(request.product_name, title) / 100
+            candidates.append(
+                MatchCandidate(url=url, title=title, confidence=round(confidence, 3))
             )
-            for url, title in deduplicated.items()
-        ]
         return sorted(candidates, key=lambda candidate: candidate.confidence, reverse=True)[:5]
 
 

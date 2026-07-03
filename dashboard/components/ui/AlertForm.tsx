@@ -21,6 +21,7 @@ export function AlertForm({
   const [result, setResult] = useState<ActionResult | null>(null)
   const [condition, setCondition] = useState(alert?.condition ?? 'below_pct')
   const needsThreshold = !['out_of_stock', 'back_in_stock'].includes(condition)
+  const supportsUnits = ['price_drop', 'price_rise'].includes(condition)
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -58,19 +59,42 @@ export function AlertForm({
             <option value="below_abs">Mitbewerber ist günstiger um mehr als (€)</option>
             <option value="above_abs">Mitbewerber ist teurer um mehr als (€)</option>
             <option value="undercut_abs">Mitbewerber unterbietet dich um (€)</option>
+            <option value="price_drop">Mitbewerber senkt seinen Preis</option>
+            <option value="price_rise">Mitbewerber erhöht seinen Preis</option>
             <option value="out_of_stock">Quelle ist nicht mehr verfügbar</option>
             <option value="back_in_stock">Quelle ist wieder verfügbar</option>
+            <option value="source_broken">Preisquelle schlägt wiederholt fehl</option>
           </select>
         </label>
         {needsThreshold ? (
           <label>
-            <span className="field-label">Grenzwert</span>
-            <input className="field" name="threshold" type="number" min="0.01" step="0.01" required defaultValue={alert?.threshold ?? 10} />
+            <span className="field-label">{condition === 'source_broken' ? 'Fehler in Folge' : 'Grenzwert'}</span>
+            <input
+              key={condition}
+              className="field"
+              name="threshold"
+              type="number"
+              min={condition === 'source_broken' ? 1 : 0.01}
+              step={condition === 'source_broken' ? 1 : 0.01}
+              required
+              defaultValue={alert?.threshold ?? (condition === 'source_broken' ? 3 : 10)}
+            />
           </label>
         ) : (
           <input type="hidden" name="threshold" value="" />
         )}
       </div>
+
+      {supportsUnits && (
+        <label>
+          <span className="field-label">Schwellenwert als</span>
+          <select className="field" name="threshold_unit" defaultValue={alert?.threshold_unit ?? 'percent'}>
+            <option value="percent">Prozentuale Änderung</option>
+            <option value="absolute">Absoluter Betrag in Euro</option>
+          </select>
+        </label>
+      )}
+      {!supportsUnits && <input type="hidden" name="threshold_unit" value="absolute" />}
 
       <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
         <label>

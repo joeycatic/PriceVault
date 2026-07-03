@@ -11,10 +11,10 @@ describe('plan gates', () => {
     expect(hasPlan('agency', 'pro')).toBe(true)
   })
 
-  it('returns the product, alert, scrape, and seat limits per plan', () => {
-    expect(planLimit('free')).toEqual({ scrapesPerDay: 50, products: 5, alerts: 3, seats: 1 })
-    expect(planLimit('pro')).toEqual({ scrapesPerDay: 500, products: 50, alerts: null, seats: 1 })
-    expect(planLimit('starter')).toEqual({ scrapesPerDay: 500, products: 50, alerts: null, seats: 1 })
-    expect(planLimit('agency')).toEqual({ scrapesPerDay: 5000, products: null, alerts: null, seats: 5 })
+  it('returns the catalog, alert, scrape, and seat limits per plan', () => {
+    expect(planLimit('free')).toEqual({ scrapesPerDay: 50, products: 5, competitors: 2, alerts: 3, seats: 1 })
+    expect(planLimit('pro')).toEqual({ scrapesPerDay: 500, products: 50, competitors: 10, alerts: null, seats: 1 })
+    expect(planLimit('starter')).toEqual({ scrapesPerDay: 500, products: 50, competitors: 10, alerts: null, seats: 1 })
+    expect(planLimit('agency')).toEqual({ scrapesPerDay: 5000, products: null, competitors: null, alerts: null, seats: 5 })
   })
 })

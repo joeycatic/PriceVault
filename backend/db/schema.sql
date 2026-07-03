@@ -30,6 +30,7 @@ create table public.tenants (
   default_scrape_freq_h int not null default 12 check (default_scrape_freq_h between 1 and 168),
   invoice_email text,
   vat_id text,
+  billing_address jsonb not null default '{}'::jsonb,
   notification_defaults jsonb not null default '{}'::jsonb,
   activation_state jsonb not null default '{}'::jsonb,
   created_at  timestamptz not null default now(),
@@ -54,6 +55,25 @@ create table public.billing_orders (
   created_at      timestamptz not null default now(),
   paid_at         timestamptz,
   failed_at       timestamptz
+);
+
+create table public.billing_invoices (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  billing_order_id uuid references public.billing_orders(id) on delete set null,
+  invoice_number  text not null unique,
+  transaction_id  uuid not null unique,
+  plan            text not null check (plan in ('pro','agency')),
+  net_amount_cents integer not null check (net_amount_cents > 0),
+  vat_rate        numeric(5,2) not null default 19.00,
+  vat_amount_cents integer not null check (vat_amount_cents >= 0),
+  gross_amount_cents integer not null check (gross_amount_cents > 0),
+  currency        text not null default 'EUR',
+  seller_snapshot jsonb not null,
+  customer_snapshot jsonb not null,
+  issued_at       timestamptz not null default now(),
+  paid_at         timestamptz not null,
+  created_at      timestamptz not null default now()
 );
 
 create table public.competitors (
@@ -81,10 +101,35 @@ create table public.products (
   created_at      timestamptz not null default now()
 );
 
+create table public.product_variants (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  product_id      uuid not null references public.products(id) on delete cascade,
+  name            text not null default 'Standard',
+  sku             text,
+  gtin            text,
+  attributes      jsonb not null default '{}'::jsonb,
+  external_refs   jsonb not null default '{}'::jsonb,
+  our_price       numeric(10,2) check (our_price is null or our_price >= 0),
+  cost_price      numeric(10,2) check (cost_price is null or cost_price >= 0),
+  currency        text not null default 'EUR',
+  is_default      boolean not null default false,
+  active          boolean not null default true,
+  created_at      timestamptz not null default now()
+);
+
+create unique index idx_product_variants_default
+  on public.product_variants(product_id) where is_default = true;
+create unique index idx_product_variants_tenant_gtin
+  on public.product_variants(tenant_id, gtin) where gtin is not null;
+create unique index idx_product_variants_tenant_sku
+  on public.product_variants(tenant_id, sku) where sku is not null;
+
 create table public.competitor_products (
   id              uuid primary key default gen_random_uuid(),
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
   product_id      uuid not null references public.products(id) on delete cascade,
+  variant_id      uuid references public.product_variants(id) on delete cascade,
   competitor_id   uuid not null references public.competitors(id) on delete cascade,
   competitor_url  text not null,
   competitor_sku  text,
@@ -99,8 +144,82 @@ create table public.competitor_products (
   broken_reason   text,
   repaired_at     timestamptz,
   created_at      timestamptz not null default now(),
-  unique(product_id, competitor_id)
+  unique(variant_id, competitor_id)
 );
+
+create table public.match_suggestions (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  product_id      uuid not null references public.products(id) on delete cascade,
+  variant_id      uuid not null references public.product_variants(id) on delete cascade,
+  competitor_id   uuid not null references public.competitors(id) on delete cascade,
+  candidate_url   text not null,
+  candidate_title text not null,
+  confidence      numeric(5,4) not null check (confidence between 0 and 1),
+  match_method    text not null check (match_method in ('gtin','fuzzy')),
+  status          text not null default 'pending' check (status in ('pending','approved','rejected')),
+  reviewed_by     uuid references auth.users(id) on delete set null,
+  reviewed_at     timestamptz,
+  mapping_id      uuid references public.competitor_products(id) on delete set null,
+  created_at      timestamptz not null default now(),
+  unique(variant_id, competitor_id, candidate_url)
+);
+
+create table public.repricing_rules (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  name            text not null,
+  strategy        text not null check (strategy in ('match_lowest','beat_percent')),
+  beat_by_pct     numeric(6,2) not null default 0 check (beat_by_pct between 0 and 50),
+  min_margin_pct  numeric(6,2) not null check (min_margin_pct between 0 and 500),
+  product_id      uuid references public.products(id) on delete cascade,
+  variant_id      uuid references public.product_variants(id) on delete cascade,
+  active          boolean not null default true,
+  created_at      timestamptz not null default now(),
+  check (strategy = 'beat_percent' or beat_by_pct = 0)
+);
+
+create table public.reprice_suggestions (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  rule_id         uuid not null references public.repricing_rules(id) on delete cascade,
+  product_id      uuid not null references public.products(id) on delete cascade,
+  variant_id      uuid not null references public.product_variants(id) on delete cascade,
+  previous_price  numeric(10,2),
+  lowest_competitor_price numeric(10,2) not null,
+  margin_floor    numeric(10,2) not null,
+  suggested_price numeric(10,2) not null check (suggested_price >= 0),
+  status          text not null default 'pending' check (status in ('pending','approved','rejected','applied','failed')),
+  reviewed_by     uuid references auth.users(id) on delete set null,
+  reviewed_at     timestamptz,
+  applied_at      timestamptz,
+  writeback_status text not null default 'pending' check (writeback_status in ('pending','local_only','succeeded','failed')),
+  writeback_error text,
+  created_at      timestamptz not null default now()
+);
+
+create table public.product_insights (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references public.tenants(id) on delete cascade,
+  product_id      uuid not null references public.products(id) on delete cascade,
+  variant_id      uuid not null references public.product_variants(id) on delete cascade,
+  state_fingerprint text not null,
+  commentary      text not null,
+  corridor_min    numeric(10,2) not null,
+  corridor_max    numeric(10,2) not null,
+  corridor_reason text not null,
+  model           text not null,
+  source_payload  jsonb not null default '{}'::jsonb,
+  generated_at    timestamptz not null default now(),
+  unique(variant_id, state_fingerprint),
+  check (corridor_min >= 0 and corridor_max >= corridor_min)
+);
+
+create unique index idx_reprice_suggestions_one_pending
+  on public.reprice_suggestions(variant_id) where status = 'pending';
+
+create index idx_match_suggestions_tenant_status
+  on public.match_suggestions(tenant_id, status, created_at desc);
 
 create table public.price_snapshots (
   id                    uuid primary key default gen_random_uuid(),
@@ -123,8 +242,9 @@ create table public.alerts (
   tenant_id             uuid not null references public.tenants(id) on delete cascade,
   product_id            uuid references public.products(id) on delete cascade,
   competitor_id         uuid references public.competitors(id) on delete cascade,
-  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs', 'out_of_stock', 'back_in_stock', 'undercut_abs')),
+  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs', 'out_of_stock', 'back_in_stock', 'undercut_abs', 'price_drop', 'price_rise', 'source_broken')),
   threshold             numeric(10,2),
+  threshold_unit        text not null default 'percent' check (threshold_unit in ('percent','absolute')),
   notify_email          text not null,
   active                boolean not null default true,
   last_triggered_at     timestamptz,
@@ -143,10 +263,26 @@ create table public.alert_events (
   competitor_product_id uuid references public.competitor_products(id),
   our_price             numeric(10,2),
   competitor_price      numeric(10,2),
+  previous_competitor_price numeric(10,2),
+  previous_in_stock     boolean,
   delta_pct             numeric(6,2),
   email_sent            boolean not null default false,
   trigger_reason        text,
   triggered_at          timestamptz not null default now()
+);
+
+create table public.alert_digest_runs (
+  id                    uuid primary key default gen_random_uuid(),
+  tenant_id             uuid not null references public.tenants(id) on delete cascade,
+  digest_date           date not null,
+  recipient             text not null,
+  status                text not null default 'queued' check (status in ('queued','sending','sent','failed','skipped')),
+  event_count           int not null default 0 check (event_count >= 0),
+  error                 text,
+  started_at            timestamptz,
+  sent_at               timestamptz,
+  created_at            timestamptz not null default now(),
+  unique(tenant_id, digest_date)
 );
 
 create table public.scrape_failures (
@@ -320,8 +456,22 @@ create table public.privacy_requests (
   completed_at timestamptz
 );
 
+create table public.support_tickets (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  category text not null check (category in ('scraping','billing','account','general')),
+  subject text not null,
+  message text not null,
+  status text not null default 'open' check (status in ('open','in_progress','resolved','closed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.products
   add constraint products_id_tenant_key unique (id, tenant_id);
+alter table public.product_variants
+  add constraint product_variants_id_tenant_key unique (id, tenant_id);
 alter table public.competitors
   add constraint competitors_id_tenant_key unique (id, tenant_id);
 alter table public.competitor_products
@@ -336,6 +486,31 @@ alter table public.competitor_products
     foreign key (product_id, tenant_id) references public.products(id, tenant_id) on delete cascade,
   add constraint competitor_products_competitor_tenant_fkey
     foreign key (competitor_id, tenant_id) references public.competitors(id, tenant_id) on delete cascade;
+alter table public.product_variants
+  drop constraint product_variants_product_id_fkey,
+  add constraint product_variants_product_tenant_fkey
+    foreign key (product_id, tenant_id) references public.products(id, tenant_id) on delete cascade;
+
+insert into public.product_variants (
+  tenant_id, product_id, name, sku, our_price, currency, is_default
+)
+select tenant_id, id, 'Standard', our_sku, our_price, our_currency, true
+from public.products
+on conflict do nothing;
+
+update public.competitor_products cp
+set variant_id = pv.id
+from public.product_variants pv
+where cp.variant_id is null
+  and pv.product_id = cp.product_id
+  and pv.tenant_id = cp.tenant_id
+  and pv.is_default = true;
+
+alter table public.competitor_products
+  alter column variant_id set not null,
+  add constraint competitor_products_variant_tenant_fkey
+    foreign key (variant_id, tenant_id)
+    references public.product_variants(id, tenant_id) on delete cascade;
 alter table public.price_snapshots
   drop constraint price_snapshots_competitor_product_id_fkey,
   add constraint price_snapshots_mapping_tenant_fkey
@@ -368,15 +543,22 @@ alter table public.scrape_failures
 alter table public.tenants             enable row level security;
 alter table public.competitors         enable row level security;
 alter table public.products            enable row level security;
+alter table public.product_variants    enable row level security;
 alter table public.competitor_products enable row level security;
+alter table public.match_suggestions   enable row level security;
+alter table public.repricing_rules     enable row level security;
+alter table public.reprice_suggestions enable row level security;
+alter table public.product_insights    enable row level security;
 alter table public.price_snapshots     enable row level security;
 alter table public.alerts              enable row level security;
 alter table public.alert_events        enable row level security;
+alter table public.alert_digest_runs   enable row level security;
 alter table public.scrape_failures     enable row level security;
 alter table public.api_keys            enable row level security;
 alter table public.alert_channels      enable row level security;
 alter table public.team_members        enable row level security;
 alter table public.billing_orders      enable row level security;
+alter table public.billing_invoices    enable row level security;
 alter table public.connector_sources   enable row level security;
 alter table public.audit_events        enable row level security;
 alter table public.scrape_jobs         enable row level security;
@@ -385,6 +567,7 @@ alter table public.report_runs         enable row level security;
 alter table public.connector_sync_runs enable row level security;
 alter table public.alert_channel_deliveries enable row level security;
 alter table public.privacy_requests    enable row level security;
+alter table public.support_tickets     enable row level security;
 
 create or replace function public.my_tenant_id()
 returns uuid
@@ -445,6 +628,7 @@ create policy "tenants: visible membership" on public.tenants
       from public.team_members
       where tenant_id = public.tenants.id
         and user_id = auth.uid()
+        and accepted = true
     )
   );
 create policy "tenants: owner insert" on public.tenants
@@ -463,9 +647,25 @@ create policy "products: own tenant" on public.products
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
 
+create policy "product_variants: own tenant" on public.product_variants
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
+
 create policy "competitor_products: own tenant" on public.competitor_products
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
+
+create policy "match_suggestions: own tenant" on public.match_suggestions
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
+create policy "repricing_rules: own tenant" on public.repricing_rules
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
+create policy "reprice_suggestions: own tenant" on public.reprice_suggestions
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
+create policy "product_insights: own tenant" on public.product_insights
+  for select using (tenant_id = public.my_tenant_id());
 
 create policy "price_snapshots: own tenant" on public.price_snapshots
   for all using (tenant_id = public.my_tenant_id())
@@ -478,6 +678,9 @@ create policy "alerts: own tenant" on public.alerts
 create policy "alert_events: own tenant" on public.alert_events
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
+
+create policy "alert_digest_runs: tenant read" on public.alert_digest_runs
+  for select using (tenant_id = public.my_tenant_id());
 
 create policy "alert_channel_deliveries: tenant read" on public.alert_channel_deliveries
   for select using (tenant_id = public.my_tenant_id());
@@ -546,6 +749,10 @@ create policy "privacy_requests: tenant read" on public.privacy_requests
   for select using (tenant_id = public.my_tenant_id());
 create policy "privacy_requests: tenant insert" on public.privacy_requests
   for insert with check (tenant_id = public.my_tenant_id());
+create policy "support_tickets: tenant read" on public.support_tickets
+  for select using (tenant_id = public.my_tenant_id());
+create policy "support_tickets: tenant insert" on public.support_tickets
+  for insert with check (tenant_id = public.my_tenant_id() and user_id = auth.uid());
 
 create or replace view public.v_latest_prices
 with (security_invoker = true) as
@@ -553,6 +760,7 @@ select distinct on (cp.id)
   cp.id                   as competitor_product_id,
   cp.tenant_id,
   cp.product_id,
+  cp.variant_id,
   cp.competitor_id,
   cp.competitor_url,
   cp.health_status,
@@ -562,26 +770,34 @@ select distinct on (cp.id)
   cp.last_successful_scrape_at,
   cp.broken_reason,
   p.name                  as product_name,
-  p.our_price,
-  p.our_currency,
+  pv.name                 as variant_name,
+  pv.sku                  as variant_sku,
+  pv.gtin                 as variant_gtin,
+  pv.our_price,
+  pv.currency             as our_currency,
   c.shop_name             as competitor_shop,
   ps.price                as competitor_price,
   ps.in_stock,
   ps.scraped_at,
   ps.scrape_ok,
-  round(((ps.price - p.our_price) / nullif(p.our_price, 0)) * 100, 2) as delta_pct
+  round(((ps.price - pv.our_price) / nullif(pv.our_price, 0)) * 100, 2) as delta_pct
 from public.competitor_products cp
 join public.products p    on p.id = cp.product_id and p.tenant_id = cp.tenant_id
+join public.product_variants pv on pv.id = cp.variant_id and pv.tenant_id = cp.tenant_id
 join public.competitors c on c.id = cp.competitor_id and c.tenant_id = cp.tenant_id
 left join public.price_snapshots ps
   on ps.competitor_product_id = cp.id and ps.tenant_id = cp.tenant_id
-where cp.active = true and p.active = true and c.active = true
+where cp.active = true and p.active = true and pv.active = true and c.active = true
 order by cp.id, ps.scraped_at desc;
 
 grant usage on schema public to authenticated, service_role;
 grant select, insert, update, delete on public.tenants, public.competitors,
-  public.products, public.competitor_products, public.alerts to authenticated;
+  public.products, public.product_variants, public.competitor_products,
+  public.match_suggestions, public.repricing_rules, public.reprice_suggestions,
+  public.alerts to authenticated;
+grant select on public.product_insights to authenticated;
 grant select on public.price_snapshots, public.alert_events, public.v_latest_prices to authenticated;
+grant select on public.alert_digest_runs to authenticated;
 grant select on public.alert_channel_deliveries to authenticated;
 grant select on public.scrape_failures to authenticated;
 grant select (id, tenant_id, name, created_at, last_used, revoked)
@@ -593,9 +809,11 @@ grant update (revoked)
 grant select, insert, update, delete on public.alert_channels,
   public.connector_sources to authenticated;
 grant select on public.audit_events, public.scrape_jobs, public.report_schedules,
-  public.report_runs, public.connector_sync_runs, public.privacy_requests to authenticated;
+  public.report_runs, public.connector_sync_runs, public.privacy_requests,
+  public.support_tickets to authenticated;
 grant insert on public.report_schedules, public.report_runs, public.connector_sync_runs,
   public.privacy_requests, public.alert_channel_deliveries to authenticated;
+grant insert on public.support_tickets to authenticated;
 grant update on public.report_schedules to authenticated;
 grant select on public.team_members to authenticated;
 create policy "billing_orders: tenant owner read" on public.billing_orders
@@ -604,6 +822,15 @@ create policy "billing_orders: tenant owner read" on public.billing_orders
     and exists (
       select 1 from public.tenants
       where tenants.id = billing_orders.tenant_id
+        and tenants.user_id = auth.uid()
+    )
+  );
+create policy "billing_invoices: tenant owner read" on public.billing_invoices
+  for select using (
+    tenant_id = public.my_tenant_id()
+    and exists (
+      select 1 from public.tenants
+      where tenants.id = billing_invoices.tenant_id
         and tenants.user_id = auth.uid()
     )
   );
@@ -617,18 +844,24 @@ create policy "billing_orders: tenant owner insert" on public.billing_orders
     )
   );
 grant select on public.billing_orders to authenticated;
+grant select on public.billing_invoices to authenticated;
 grant insert (tenant_id, order_code, plan, amount_cents)
   on public.billing_orders to authenticated;
 grant update (accepted) on public.team_members to authenticated;
 grant insert (tenant_id, user_id, role, accepted) on public.team_members to authenticated;
 grant delete on public.team_members to authenticated;
 grant all on public.tenants, public.competitors, public.products,
-  public.competitor_products, public.price_snapshots, public.alerts,
-  public.alert_events, public.scrape_failures, public.api_keys,
+  public.product_variants, public.competitor_products, public.match_suggestions,
+  public.repricing_rules, public.reprice_suggestions,
+  public.product_insights,
+  public.price_snapshots, public.alerts,
+  public.alert_events, public.alert_digest_runs, public.scrape_failures, public.api_keys,
   public.alert_channels, public.team_members, public.connector_sources,
   public.audit_events, public.scrape_jobs, public.report_schedules,
   public.report_runs, public.connector_sync_runs, public.alert_channel_deliveries,
   public.privacy_requests to service_role;
+grant all on public.support_tickets to service_role;
 grant all on public.billing_orders to service_role;
+grant all on public.billing_invoices to service_role;
 
 notify pgrst, 'reload schema';

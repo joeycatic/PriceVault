@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
+import { minimumScrapeFrequency, planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { Competitor } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
@@ -15,18 +16,35 @@ export default async function CompetitorsPage() {
     ? await supabase.from('competitors').select('*').eq('tenant_id', tenant.id).order('shop_name')
     : { data: [] }
   const competitors = (data ?? []) as Competitor[]
+  const minimumFrequency = minimumScrapeFrequency(tenant?.plan)
+  const competitorLimit = planLimit(tenant?.plan).competitors
 
   async function saveAction(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const frequency = Number(formData.get('scrape_freq_h'))
+    if (!Number.isInteger(frequency) || frequency < minimumFrequency) {
+      return { ok: false, message: `Dein Tarif erlaubt Abrufe frühestens alle ${minimumFrequency} Stunden.` }
+    }
     const client = await createClient()
+    if (competitorLimit !== null) {
+      const { count, error: countError } = await client
+        .from('competitors')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenant.id)
+        .eq('active', true)
+      if (countError) return { ok: false, message: 'Das Mitbewerberlimit konnte nicht geprüft werden.' }
+      if ((count ?? 0) >= competitorLimit) {
+        return { ok: false, message: `Dein Plan erlaubt maximal ${competitorLimit} aktive Mitbewerber.` }
+      }
+    }
     const { error } = await client.from('competitors').insert({
       tenant_id: tenant.id,
       shop_name: String(formData.get('shop_name')),
       base_url: String(formData.get('base_url')),
       selector_price: String(formData.get('selector_price') || '') || null,
       selector_stock: String(formData.get('selector_stock') || '') || null,
-      scrape_freq_h: Number(formData.get('scrape_freq_h')),
+      scrape_freq_h: frequency,
     })
     if (error) return { ok: false, message: 'Der Mitbewerber konnte nicht gespeichert werden.' }
     revalidatePath('/dashboard/competitors')
@@ -98,7 +116,9 @@ export default async function CompetitorsPage() {
                       <h3 className="truncate font-semibold">{competitor.shop_name}</h3>
                     </div>
                     <p className="mt-1 truncate font-mono text-xs text-vault-500">{competitor.base_url}</p>
-                    <p className="mt-2 text-xs text-vault-500">Letzter Abruf: {formatRelativeTime(competitor.last_scraped_at)}</p>
+                    <p className="mt-2 text-xs text-vault-500">
+                      Alle {competitor.scrape_freq_h} Std. · Letzter Abruf: {formatRelativeTime(competitor.last_scraped_at)}
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <Link className="button-secondary" href={`/dashboard/competitors/${competitor.id}`}>Bearbeiten</Link>
@@ -120,7 +140,8 @@ export default async function CompetitorsPage() {
         <section className="panel p-5 sm:p-6" aria-labelledby="new-competitor">
           <p className="eyebrow">Neue Quelle</p>
           <h2 id="new-competitor" className="mb-6 mt-2 text-xl font-semibold">Mitbewerber anlegen</h2>
-          <CompetitorForm saveAction={saveAction} testAction={testAction} />
+          {competitorLimit !== null && <p className="mb-5 text-sm text-vault-400">Dein Plan nutzt {competitors.filter((item) => item.active).length} von {competitorLimit} Mitbewerbern.</p>}
+          <CompetitorForm minimumFrequency={minimumFrequency} saveAction={saveAction} testAction={testAction} />
         </section>
       </div>
     </>

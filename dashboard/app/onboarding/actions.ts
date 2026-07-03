@@ -125,6 +125,19 @@ export async function saveFirstProduct(formData: FormData): Promise<OnboardingRe
     .select('id, name')
     .single()
   if (error || !data) return { ok: false, message: 'Das Produkt konnte nicht gespeichert werden.' }
+  const { error: variantError } = await supabase.from('product_variants').insert({
+    tenant_id: tenant.id,
+    product_id: data.id,
+    name: 'Standard',
+    sku: sku || null,
+    our_price: price,
+    currency: 'EUR',
+    is_default: true,
+  })
+  if (variantError) {
+    await supabase.from('products').delete().eq('tenant_id', tenant.id).eq('id', data.id)
+    return { ok: false, message: 'Die Standardvariante konnte nicht gespeichert werden.' }
+  }
 
   revalidatePath('/dashboard')
   revalidatePath('/dashboard/products')
@@ -158,6 +171,14 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
     .eq('id', productId)
     .maybeSingle()
   if (!product) return { ok: false, message: 'Das ausgewählte Produkt wurde nicht gefunden.' }
+  const { data: variant } = await supabase
+    .from('product_variants')
+    .select('id')
+    .eq('tenant_id', tenant.id)
+    .eq('product_id', productId)
+    .eq('is_default', true)
+    .maybeSingle()
+  if (!variant) return { ok: false, message: 'Für das Produkt fehlt eine Standardvariante.' }
 
   let competitorId = existingCompetitorId
   let createdCompetitorId: string | null = null
@@ -186,6 +207,7 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
     {
       tenant_id: tenant.id,
       product_id: productId,
+      variant_id: variant.id,
       competitor_id: competitorId,
       competitor_url: productUrl,
       selector_price: selectorPrice || null,

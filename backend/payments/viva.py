@@ -6,7 +6,12 @@ from typing import Any
 import httpx
 
 
-PLAN_AMOUNTS = {"pro": 2_900, "agency": 9_900}
+PLAN_NET_AMOUNTS = {"pro": 2_900, "agency": 9_900}
+VAT_RATE = 19
+PLAN_AMOUNTS = {
+    plan: round(net_amount * (100 + VAT_RATE) / 100)
+    for plan, net_amount in PLAN_NET_AMOUNTS.items()
+}
 
 
 class VivaConfigurationError(RuntimeError):

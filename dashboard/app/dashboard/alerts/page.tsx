@@ -6,6 +6,7 @@ import { currentTenant } from '@/lib/backend'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { Alert, Competitor, Product } from '@/lib/types'
+import { formatPrice } from '@/lib/utils'
 
 const conditionLabels: Record<Alert['condition'], string> = {
   below_pct: 'Mitbewerber günstiger als du',
@@ -15,6 +16,9 @@ const conditionLabels: Record<Alert['condition'], string> = {
   undercut_abs: 'Mitbewerber unterbietet dich',
   out_of_stock: 'Quelle nicht verfügbar',
   back_in_stock: 'Quelle wieder verfügbar',
+  price_drop: 'Mitbewerberpreis gesunken',
+  price_rise: 'Mitbewerberpreis gestiegen',
+  source_broken: 'Preisquelle wiederholt fehlgeschlagen',
 }
 
 export default async function AlertsPage() {
@@ -47,6 +51,7 @@ export default async function AlertsPage() {
       competitor_id: String(formData.get('competitor_id') || '') || null,
       condition,
       threshold: ['out_of_stock', 'back_in_stock'].includes(condition) ? null : Number(thresholdRaw),
+      threshold_unit: String(formData.get('threshold_unit') || 'absolute'),
       notify_email: String(formData.get('notify_email')),
       cooldown_h: Number(formData.get('cooldown_h')),
     }
@@ -107,7 +112,7 @@ export default async function AlertsPage() {
             {alerts.length ? alerts.map((alert) => {
               const product = products.find((item) => item.id === alert.product_id)
               const competitor = competitors.find((item) => item.id === alert.competitor_id)
-              const suffix = alert.condition.endsWith('_pct') ? '%' : '€'
+              const suffix = alert.condition.endsWith('_pct') || alert.threshold_unit === 'percent' ? '%' : alert.condition === 'source_broken' ? 'Fehler' : '€'
               return (
                 <article key={alert.id} className="panel p-5">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -150,11 +155,11 @@ export default async function AlertsPage() {
               {events.map((event) => (
                 <article key={event.id} className="p-5 text-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <span>{event.trigger_reason ?? 'Preisalarm'}</span>
+                    <span>{conditionLabels[event.trigger_reason as Alert['condition']] ?? 'Preisalarm'}</span>
                     <span className="font-mono text-xs text-vault-500">{new Date(event.triggered_at).toLocaleString('de-DE')}</span>
                   </div>
                   <p className="mt-2 font-mono text-xs text-vault-400">
-                    {event.competitor_price ?? '-'} EUR · {event.delta_pct ?? '-'} %
+                    {formatPrice(event.competitor_price === null ? null : Number(event.competitor_price))} · {event.delta_pct === null ? '–' : `${Number(event.delta_pct).toLocaleString('de-DE')} %`}
                   </p>
                 </article>
               ))}

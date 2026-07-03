@@ -55,6 +55,47 @@ async def update_billing_order(order_code: int, values: dict[str, Any]) -> dict[
     return rows[0] if rows else None
 
 
+async def create_billing_invoice(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("billing_invoices").insert(values))
+    return rows[0]
+
+
+async def list_billing_invoices(tenant_id: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("billing_invoices")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .order("issued_at", desc=True)
+    )
+
+
+async def get_billing_invoice(tenant_id: str, invoice_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("billing_invoices")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", invoice_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def get_billing_invoice_by_transaction(
+    tenant_id: str, transaction_id: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("billing_invoices")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("transaction_id", transaction_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
 async def list_due_viva_subscriptions(now: str) -> list[dict[str, Any]]:
     return await _execute(
         lambda: get_supabase()
@@ -93,6 +134,18 @@ async def list_competitors(tenant_id: str, active_only: bool = False) -> list[di
         return query.order("shop_name")
 
     return await _execute(build)
+
+
+async def count_active_competitors(tenant_id: str) -> int:
+    response = await asyncio.to_thread(
+        lambda: get_supabase()
+        .table("competitors")
+        .select("id", count="exact", head=True)
+        .eq("tenant_id", tenant_id)
+        .eq("active", True)
+        .execute()
+    )
+    return int(response.count or 0)
 
 
 async def get_competitor(tenant_id: str, competitor_id: str) -> dict[str, Any] | None:
@@ -195,11 +248,82 @@ async def soft_delete_product(tenant_id: str, product_id: str) -> bool:
     return updated
 
 
+async def list_product_variants(
+    tenant_id: str, product_id: str | None = None, active_only: bool = False
+) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("product_variants").select("*").eq("tenant_id", tenant_id)
+        if product_id:
+            query = query.eq("product_id", product_id)
+        if active_only:
+            query = query.eq("active", True)
+        return query.order("is_default", desc=True).order("name")
+
+    return await _execute(build)
+
+
+async def get_product_variant(
+    tenant_id: str, variant_id: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("product_variants")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", variant_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_product_variant(
+    tenant_id: str, product_id: str, values: dict[str, Any]
+) -> dict[str, Any]:
+    if values.get("is_default"):
+        await _execute(
+            lambda: get_supabase()
+            .table("product_variants")
+            .update({"is_default": False})
+            .eq("tenant_id", tenant_id)
+            .eq("product_id", product_id)
+        )
+    rows = await _execute(
+        lambda: get_supabase().table("product_variants").insert(
+            {**values, "tenant_id": tenant_id, "product_id": product_id}
+        )
+    )
+    return rows[0]
+
+
+async def update_product_variant(
+    tenant_id: str, variant_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    current = await get_product_variant(tenant_id, variant_id)
+    if not current:
+        return None
+    if values.get("is_default"):
+        await _execute(
+            lambda: get_supabase()
+            .table("product_variants")
+            .update({"is_default": False})
+            .eq("tenant_id", tenant_id)
+            .eq("product_id", current["product_id"])
+        )
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("product_variants")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", variant_id)
+    )
+    return rows[0] if rows else None
+
+
 async def list_product_mappings(tenant_id: str, product_id: str) -> list[dict[str, Any]]:
     return await _execute(
         lambda: get_supabase()
         .table("competitor_products")
-        .select("*, competitors(shop_name, base_url)")
+        .select("*, product_variants(name,sku,gtin,our_price,currency), competitors(shop_name, base_url)")
         .eq("tenant_id", tenant_id)
         .eq("product_id", product_id)
         .order("created_at")
@@ -210,7 +334,7 @@ async def list_all_mappings(tenant_id: str) -> list[dict[str, Any]]:
     return await _execute(
         lambda: get_supabase()
         .table("competitor_products")
-        .select("*, products(name), competitors(shop_name)")
+        .select("*, products(name), product_variants(name,sku,gtin,our_price,currency), competitors(shop_name)")
         .eq("tenant_id", tenant_id)
         .order("created_at")
     )
@@ -227,11 +351,187 @@ async def create_product_mapping(
     return rows[0]
 
 
+async def get_mapping_for_variant_competitor(
+    tenant_id: str, variant_id: str, competitor_id: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("competitor_products")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("variant_id", variant_id)
+        .eq("competitor_id", competitor_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_match_suggestions(values: list[dict[str, Any]]) -> None:
+    if not values:
+        return
+    await _execute(
+        lambda: get_supabase()
+        .table("match_suggestions")
+        .upsert(
+            values,
+            on_conflict="variant_id,competitor_id,candidate_url",
+            ignore_duplicates=True,
+        )
+    )
+
+
+async def list_match_suggestions(
+    tenant_id: str,
+    status: str = "pending",
+    variant_id: str | None = None,
+    competitor_id: str | None = None,
+) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = (
+            get_supabase()
+            .table("match_suggestions")
+            .select(
+                "*, products(name), product_variants(name,sku,gtin), competitors(shop_name)"
+            )
+            .eq("tenant_id", tenant_id)
+            .eq("status", status)
+        )
+        if variant_id:
+            query = query.eq("variant_id", variant_id)
+        if competitor_id:
+            query = query.eq("competitor_id", competitor_id)
+        return query.order("confidence", desc=True).order("created_at", desc=True)
+
+    return await _execute(build)
+
+
+async def get_match_suggestion(tenant_id: str, suggestion_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("match_suggestions")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", suggestion_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_match_suggestion(
+    tenant_id: str, suggestion_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("match_suggestions")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", suggestion_id)
+    )
+    return rows[0] if rows else None
+
+
+async def list_repricing_rules(tenant_id: str, active_only: bool = False) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = get_supabase().table("repricing_rules").select("*").eq("tenant_id", tenant_id)
+        if active_only:
+            query = query.eq("active", True)
+        return query.order("created_at", desc=True)
+
+    return await _execute(build)
+
+
+async def create_repricing_rule(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("repricing_rules").insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def update_repricing_rule(
+    tenant_id: str, rule_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("repricing_rules")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", rule_id)
+    )
+    return rows[0] if rows else None
+
+
+async def list_reprice_suggestions(
+    tenant_id: str, suggestion_status: str = "pending"
+) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("reprice_suggestions")
+        .select("*, repricing_rules(name,strategy,beat_by_pct,min_margin_pct), products(name), product_variants(name,sku,cost_price,currency)")
+        .eq("tenant_id", tenant_id)
+        .eq("status", suggestion_status)
+        .order("created_at", desc=True)
+    )
+
+
+async def get_reprice_suggestion(tenant_id: str, suggestion_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("reprice_suggestions")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", suggestion_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def upsert_pending_reprice_suggestion(
+    tenant_id: str, variant_id: str, values: dict[str, Any]
+) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("reprice_suggestions")
+        .select("id")
+        .eq("tenant_id", tenant_id)
+        .eq("variant_id", variant_id)
+        .eq("status", "pending")
+        .limit(1)
+    )
+    if rows:
+        updated = await _execute(
+            lambda: get_supabase()
+            .table("reprice_suggestions")
+            .update(values)
+            .eq("tenant_id", tenant_id)
+            .eq("id", rows[0]["id"])
+        )
+        return updated[0]
+    created = await _execute(
+        lambda: get_supabase()
+        .table("reprice_suggestions")
+        .insert({**values, "tenant_id": tenant_id, "variant_id": variant_id})
+    )
+    return created[0]
+
+
+async def update_reprice_suggestion(
+    tenant_id: str, suggestion_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("reprice_suggestions")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", suggestion_id)
+    )
+    return rows[0] if rows else None
+
+
 async def get_product_mapping(tenant_id: str, mapping_id: str) -> dict[str, Any] | None:
     rows = await _execute(
         lambda: get_supabase()
         .table("competitor_products")
-        .select("*, products(name), competitors(shop_name,selector_stock)")
+        .select("*, products(name), product_variants(name,sku,gtin,our_price,currency), competitors(shop_name,selector_stock)")
         .eq("tenant_id", tenant_id)
         .eq("id", mapping_id)
         .limit(1)
@@ -272,7 +572,7 @@ async def get_scrape_targets(
             .table("competitor_products")
             .select(
                 "id,tenant_id,competitor_url,selector_price,competitor_id,"
-                "health_status,consecutive_failures,"
+                "health_status,consecutive_failures,last_successful_scrape_at,"
                 "competitors!inner(selector_price,selector_stock,active,scrape_freq_h,last_scraped_at)"
             )
             .eq("active", True)
@@ -301,7 +601,7 @@ async def get_scrape_targets(
                 "health_status": row.get("health_status"),
                 "consecutive_failures": row.get("consecutive_failures"),
                 "scrape_freq_h": competitor.get("scrape_freq_h"),
-                "last_scraped_at": competitor.get("last_scraped_at"),
+                "last_scraped_at": row.get("last_successful_scrape_at"),
             }
         )
     return targets
@@ -399,6 +699,17 @@ async def get_latest_prices(tenant_id: str) -> list[dict[str, Any]]:
     )
 
 
+async def list_recent_snapshots(tenant_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("price_snapshots")
+        .select("competitor_product_id,price,in_stock,scrape_ok,scraped_at")
+        .eq("tenant_id", tenant_id)
+        .order("scraped_at", desc=True)
+        .limit(limit)
+    )
+
+
 async def get_snapshot_history(
     tenant_id: str, competitor_product_id: str, since_iso: str
 ) -> list[dict[str, Any]]:
@@ -411,6 +722,42 @@ async def get_snapshot_history(
         .gte("scraped_at", since_iso)
         .order("scraped_at")
     )
+
+
+async def get_recent_source_snapshots(
+    tenant_id: str, competitor_product_id: str, limit: int = 2
+) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("price_snapshots")
+        .select("price,in_stock,scrape_ok,scraped_at")
+        .eq("tenant_id", tenant_id)
+        .eq("competitor_product_id", competitor_product_id)
+        .order("scraped_at", desc=True)
+        .limit(limit)
+    )
+
+
+async def get_product_insight_by_fingerprint(
+    tenant_id: str, variant_id: str, fingerprint: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("product_insights")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("variant_id", variant_id)
+        .eq("state_fingerprint", fingerprint)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_product_insight(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("product_insights").insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
 
 
 async def count_snapshots_since(tenant_id: str, since_iso: str) -> int:
@@ -516,6 +863,72 @@ async def list_alert_events(tenant_id: str, limit: int) -> list[dict[str, Any]]:
 async def insert_alert_event(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("alert_events").insert(values))
     return rows[0]
+
+
+async def list_alert_events_since(tenant_id: str, since_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("alert_events")
+        .select(
+            "*, alerts(condition), "
+            "competitor_products(competitor_url, products(name), competitors(shop_name))"
+        )
+        .eq("tenant_id", tenant_id)
+        .gte("triggered_at", since_iso)
+        .order("triggered_at", desc=False)
+    )
+
+
+async def create_alert_digest_run(
+    tenant_id: str, digest_date: str, recipient: str
+) -> dict[str, Any] | None:
+    await _execute(
+        lambda: get_supabase()
+        .table("alert_digest_runs")
+        .upsert(
+            {
+                "tenant_id": tenant_id,
+                "digest_date": digest_date,
+                "recipient": recipient,
+            },
+            on_conflict="tenant_id,digest_date",
+            ignore_duplicates=True,
+        )
+    )
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_digest_runs")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("digest_date", digest_date)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_alert_digest_run(
+    tenant_id: str, run_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_digest_runs")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+    )
+    return rows[0] if rows else None
+
+
+async def get_alert_digest_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_digest_runs")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("id", run_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
 
 
 async def create_alert_channel_delivery(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:

@@ -25,9 +25,27 @@ class AlertAgent:
     @staticmethod
     def evaluate(alert: dict[str, Any], row: dict[str, Any]) -> bool:
         if alert["condition"] == "out_of_stock":
-            return row.get("in_stock") is False
+            return row.get("previous_in_stock") is True and row.get("in_stock") is False
         if alert["condition"] == "back_in_stock":
-            return row.get("in_stock") is True
+            return row.get("previous_in_stock") is False and row.get("in_stock") is True
+        if alert.get("condition") == "source_broken":
+            return row.get("health_status") == "broken" and int(
+                row.get("consecutive_failures") or 0
+            ) >= int(alert.get("threshold") or 3)
+        if alert["condition"] in {"price_drop", "price_rise"}:
+            current = row.get("competitor_price")
+            previous = row.get("previous_competitor_price")
+            if current is None or previous is None:
+                return False
+            change = float(current) - float(previous)
+            if alert["condition"] == "price_drop":
+                change = -change
+            if change <= 0:
+                return False
+            threshold = float(alert.get("threshold") or 0)
+            if alert.get("threshold_unit") == "absolute":
+                return change >= threshold
+            return (change / float(previous) * 100) >= threshold if float(previous) else False
         if row.get("delta_pct") is None or row.get("competitor_price") is None:
             return False
         delta = float(row["delta_pct"])
@@ -66,14 +84,27 @@ class AlertAgent:
             raise RuntimeError("RESEND_API_KEY is not configured")
         resend.api_key = api_key
         subject = f"Preisalarm: {row['product_name']} bei {row['competitor_shop']}"
-        text = (
-            f"{row['competitor_shop']} verkauft \"{row['product_name']}\" jetzt für "
-            f"{float(row['competitor_price']):.2f} €.\n"
-            f"Dein Preis: {float(row['our_price']):.2f} €\n"
-            f"Differenz: {float(row['delta_pct']):.2f}%\n\n"
-            f"→ Zum Dashboard: {app_url('/dashboard')}\n\n"
-            "Du erhältst diese E-Mail, weil du einen Preisalarm für dieses Produkt "
-            "eingerichtet hast."
+        details = []
+        if row.get("competitor_price") is not None:
+            details.append(f"Aktueller Mitbewerberpreis: {float(row['competitor_price']):.2f} €")
+        if row.get("previous_competitor_price") is not None:
+            details.append(f"Vorheriger Mitbewerberpreis: {float(row['previous_competitor_price']):.2f} €")
+        if row.get("our_price") is not None:
+            details.append(f"Dein Preis: {float(row['our_price']):.2f} €")
+        if alert.get("condition") == "source_broken":
+            details.append(
+                f"Fehlgeschlagene Abrufe in Folge: {int(row.get('consecutive_failures') or 0)}"
+            )
+        text = "\n".join(
+            [
+                f"Für {row['product_name']} bei {row['competitor_shop']} wurde deine Alarmregel ausgelöst.",
+                "",
+                *details,
+                "",
+                f"Zum Dashboard: {app_url('/dashboard/alerts')}",
+                "",
+                "Du erhältst diese E-Mail aufgrund einer von dir eingerichteten Alarmregel.",
+            ]
         )
         await asyncio.to_thread(
             resend.Emails.send,
@@ -146,10 +177,20 @@ class AlertAgent:
             )
 
     async def run(self, tenant_id: str) -> dict[str, int]:
-        rows, alerts = await asyncio.gather(
+        rows, alerts, snapshots = await asyncio.gather(
             queries.get_latest_prices(tenant_id),
             queries.list_alerts(tenant_id, active_only=True),
+            queries.list_recent_snapshots(tenant_id),
         )
+        history: dict[str, list[dict[str, Any]]] = {}
+        for snapshot in snapshots:
+            if snapshot.get("scrape_ok"):
+                history.setdefault(snapshot["competitor_product_id"], []).append(snapshot)
+        for row in rows:
+            source_history = history.get(row["competitor_product_id"], [])
+            previous = source_history[1] if len(source_history) > 1 else {}
+            row["previous_competitor_price"] = previous.get("price")
+            row["previous_in_stock"] = previous.get("in_stock")
         checked = 0
         triggered = 0
         for alert in alerts:
@@ -181,6 +222,8 @@ class AlertAgent:
                         "competitor_product_id": row["competitor_product_id"],
                         "our_price": row["our_price"],
                         "competitor_price": row["competitor_price"],
+                        "previous_competitor_price": row.get("previous_competitor_price"),
+                        "previous_in_stock": row.get("previous_in_stock"),
                         "delta_pct": row["delta_pct"],
                         "email_sent": email_sent,
                         "trigger_reason": alert["condition"],

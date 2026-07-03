@@ -22,6 +22,7 @@ async def send_email(ctx: dict, *, tenant_id: str, to: str, template: str) -> di
         "onboarding_day0": "Willkommen bei PriceVault",
         "onboarding_day3": "Dein erster Mitbewerber-Check",
         "onboarding_day7": "Mehr Preisbewegungen automatisch erkennen",
+        "payment_failed": "Zahlung für dein PriceVault-Abonnement fehlgeschlagen",
     }.get(template, "PriceVault")
     await asyncio.to_thread(
         resend.Emails.send,

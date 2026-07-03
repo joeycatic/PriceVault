@@ -582,8 +582,140 @@ def test_match_search_returns_candidates(monkeypatch):
     }
 
 
+def test_match_suggestion_generate_approve_and_reject_are_tenant_scoped(monkeypatch):
+    from dataclasses import dataclass
+
+    import main
+    from auth.dependencies import get_current_tenant
+    from db import queries
+    from routers import scrape
+
+    async def fake_current_tenant():
+        return {"id": "tenant-1", "plan": "pro", "_role": "owner", "user_id": "user-1"}
+
+    async def fake_variant(tenant_id, variant_id):
+        assert tenant_id == "tenant-1"
+        return {
+            "id": variant_id,
+            "product_id": "product-1",
+            "name": "Schwarz",
+            "gtin": "4006381333931",
+        }
+
+    async def fake_product(tenant_id, product_id):
+        assert (tenant_id, product_id) == ("tenant-1", "product-1")
+        return {"id": product_id, "name": "Lampe"}
+
+    async def fake_competitor(tenant_id, competitor_id):
+        assert (tenant_id, competitor_id) == ("tenant-1", "competitor-1")
+        return {"id": competitor_id, "base_url": "https://shop.example"}
+
+    mappings = []
+    stored = []
+    suggestions = {
+        "suggestion-approve": {
+            "id": "suggestion-approve",
+            "tenant_id": "tenant-1",
+            "product_id": "product-1",
+            "variant_id": "variant-1",
+            "competitor_id": "competitor-1",
+            "candidate_url": "https://shop.example/lampe",
+            "status": "pending",
+        },
+        "suggestion-reject": {
+            "id": "suggestion-reject",
+            "tenant_id": "tenant-1",
+            "product_id": "product-1",
+            "variant_id": "variant-1",
+            "competitor_id": "competitor-2",
+            "candidate_url": "https://shop.example/falsch",
+            "status": "pending",
+        },
+    }
+
+    async def fake_existing_mapping(_tenant_id, variant_id, competitor_id):
+        return next(
+            (
+                row
+                for row in mappings
+                if row["variant_id"] == variant_id and row["competitor_id"] == competitor_id
+            ),
+            None,
+        )
+
+    @dataclass
+    class FakeCandidate:
+        url: str
+        title: str
+        confidence: float
+
+    class FakeMatcherAgent:
+        async def search(self, request):
+            assert request.gtin == "4006381333931"
+            return [FakeCandidate("https://shop.example/lampe", "Lampe GTIN", 1.0)]
+
+    async def fake_create_suggestions(values):
+        stored.extend(values)
+
+    async def fake_list(_tenant_id, _status="pending", variant_id=None, competitor_id=None):
+        assert (variant_id, competitor_id) == ("variant-1", "competitor-1")
+        return [{"id": "generated", **stored[0]}]
+
+    async def fake_get_suggestion(tenant_id, suggestion_id):
+        assert tenant_id == "tenant-1"
+        return suggestions.get(suggestion_id)
+
+    async def fake_create_mapping(tenant_id, product_id, values):
+        row = {"id": "mapping-1", "tenant_id": tenant_id, "product_id": product_id, **values}
+        mappings.append(row)
+        return row
+
+    async def fake_update_suggestion(tenant_id, suggestion_id, values):
+        assert tenant_id == "tenant-1"
+        suggestions[suggestion_id].update(values)
+        return suggestions[suggestion_id]
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(queries, "get_product_variant", fake_variant)
+    monkeypatch.setattr(queries, "get_product", fake_product)
+    monkeypatch.setattr(queries, "get_competitor", fake_competitor)
+    monkeypatch.setattr(queries, "get_mapping_for_variant_competitor", fake_existing_mapping)
+    monkeypatch.setattr(queries, "create_match_suggestions", fake_create_suggestions)
+    monkeypatch.setattr(queries, "list_match_suggestions", fake_list)
+    monkeypatch.setattr(queries, "get_match_suggestion", fake_get_suggestion)
+    monkeypatch.setattr(queries, "create_product_mapping", fake_create_mapping)
+    monkeypatch.setattr(queries, "update_match_suggestion", fake_update_suggestion)
+    monkeypatch.setattr(scrape, "MatcherAgent", FakeMatcherAgent)
+    monkeypatch.setattr(scrape, "record_audit_event", fake_audit)
+    main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
+    try:
+        client = TestClient(main.app)
+        generated = client.post(
+            "/match/suggestions/generate",
+            json={"variant_id": "variant-1", "competitor_id": "competitor-1"},
+        )
+        approved = client.post("/match/suggestions/suggestion-approve/approve")
+        rejected = client.post("/match/suggestions/suggestion-reject/reject")
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert generated.status_code == 201
+    assert generated.json()[0]["match_method"] == "gtin"
+    assert stored[0]["tenant_id"] == "tenant-1"
+    assert approved.status_code == 200
+    assert approved.json()["mapping"]["variant_id"] == "variant-1"
+    assert suggestions["suggestion-approve"]["status"] == "approved"
+    assert rejected.status_code == 200
+    assert suggestions["suggestion-reject"]["status"] == "rejected"
+    assert len(mappings) == 1
+
+
 def test_plan_rank_order():
-    from auth.plan_guard import PLAN_RANK, plan_limit
+    from fastapi import HTTPException
+
+    from auth.plan_guard import PLAN_RANK, assert_scrape_frequency, plan_limit
 
     assert PLAN_RANK["free"] < PLAN_RANK["pro"] < PLAN_RANK["agency"]
     assert PLAN_RANK["trial"] == PLAN_RANK["free"]
@@ -592,6 +724,49 @@ def test_plan_rank_order():
     assert plan_limit("agency", "products") is None
     assert plan_limit("free", "alerts") == 3
     assert plan_limit("pro", "alerts") is None
+    assert plan_limit("free", "competitors") == 2
+    assert plan_limit("pro", "competitors") == 10
+    assert plan_limit("agency", "competitors") is None
+    assert_scrape_frequency("agency", 1)
+    assert_scrape_frequency("pro", 6)
+    assert_scrape_frequency("free", 12)
+    try:
+        assert_scrape_frequency("free", 6)
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("free plan accepted a six-hour scrape interval")
+
+
+def test_repricing_calculation_never_crosses_margin_floor():
+    from agents.repricing_agent import calculate_suggested_price
+
+    matched, matched_floor = calculate_suggested_price(
+        lowest_competitor_price=90,
+        cost_price=80,
+        strategy="match_lowest",
+        beat_by_pct=0,
+        min_margin_pct=25,
+    )
+    beaten, beaten_floor = calculate_suggested_price(
+        lowest_competitor_price=120,
+        cost_price=80,
+        strategy="beat_percent",
+        beat_by_pct=5,
+        min_margin_pct=25,
+    )
+
+    assert (matched, matched_floor) == (100.0, 100.0)
+    assert (beaten, beaten_floor) == (114.0, 100.0)
+
+
+def test_product_insight_material_change_threshold():
+    from agents.insight_agent import is_material_change
+
+    assert is_material_change({"price": 98, "in_stock": True}, {"price": 100, "in_stock": True})
+    assert not is_material_change({"price": 99, "in_stock": True}, {"price": 100, "in_stock": True})
+    assert is_material_change({"price": 100, "in_stock": False}, {"price": 100, "in_stock": True})
+    assert is_material_change({"price": 100, "in_stock": True}, None)
 
 
 def test_product_create_enforces_plan_product_limit(monkeypatch):
@@ -638,8 +813,14 @@ def test_product_create_allows_unlimited_agency_products(monkeypatch):
         assert tenant_id == "tenant-1"
         return {"id": "product-1", **values}
 
+    async def fake_create_variant(tenant_id, product_id, values):
+        assert (tenant_id, product_id) == ("tenant-1", "product-1")
+        assert values["is_default"] is True
+        return {"id": "variant-1", **values}
+
     monkeypatch.setattr(queries, "count_active_products", fake_count_active_products)
     monkeypatch.setattr(queries, "create_product", fake_create_product)
+    monkeypatch.setattr(queries, "create_product_variant", fake_create_variant)
     main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
     try:
         client = TestClient(main.app)
@@ -687,6 +868,11 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
     async def fake_get_competitor(tenant_id, competitor_id):
         return {"id": competitor_id} if tenant_id == "tenant-1" else None
 
+    async def fake_get_variant(tenant_id, variant_id):
+        if (tenant_id, variant_id) == ("tenant-1", "variant-1"):
+            return {"id": variant_id, "product_id": "product-1"}
+        return None
+
     async def fake_delete_product_mapping(tenant_id, mapping_id):
         assert tenant_id == "tenant-1"
         return mapping_id == "mapping-1"
@@ -698,6 +884,7 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
     monkeypatch.setattr(queries, "create_product_mapping", fake_create_product_mapping)
     monkeypatch.setattr(queries, "get_product", fake_get_product)
     monkeypatch.setattr(queries, "get_competitor", fake_get_competitor)
+    monkeypatch.setattr(queries, "get_product_variant", fake_get_variant)
     monkeypatch.setattr(queries, "delete_product_mapping", fake_delete_product_mapping)
     main.app.dependency_overrides[get_tenant] = fake_tenant
     try:
@@ -710,6 +897,7 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
             "/products/product-1/mappings",
             json={
                 "competitor_id": "competitor-1",
+                "variant_id": "variant-1",
                 "competitor_url": "https://shop.example/p",
                 "competitor_sku": "SKU-1",
                 "selector_price": ".price",
@@ -741,6 +929,98 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
     assert missing_delete.json()["detail"] == "Produkt nicht gefunden"
 
 
+def test_product_variant_routes_are_tenant_and_product_scoped(monkeypatch):
+    import main
+    from db import queries
+    from routers import get_tenant
+
+    async def fake_tenant():
+        yield "tenant-1"
+
+    async def fake_get_product(tenant_id, product_id):
+        assert tenant_id == "tenant-1"
+        return {"id": product_id} if product_id == "product-1" else None
+
+    async def fake_list(tenant_id, product_id):
+        assert (tenant_id, product_id) == ("tenant-1", "product-1")
+        return [{"id": "variant-1", "product_id": product_id, "name": "Schwarz"}]
+
+    async def fake_create(tenant_id, product_id, values):
+        assert (tenant_id, product_id) == ("tenant-1", "product-1")
+        return {"id": "variant-2", "product_id": product_id, **values}
+
+    async def fake_get_variant(tenant_id, variant_id):
+        assert tenant_id == "tenant-1"
+        if variant_id == "variant-1":
+            return {"id": variant_id, "product_id": "product-1"}
+        if variant_id == "foreign-product-variant":
+            return {"id": variant_id, "product_id": "product-2"}
+        return None
+
+    async def fake_update(tenant_id, variant_id, values):
+        assert (tenant_id, variant_id) == ("tenant-1", "variant-1")
+        return {"id": variant_id, "product_id": "product-1", **values}
+
+    monkeypatch.setattr(queries, "get_product", fake_get_product)
+    monkeypatch.setattr(queries, "list_product_variants", fake_list)
+    monkeypatch.setattr(queries, "create_product_variant", fake_create)
+    monkeypatch.setattr(queries, "get_product_variant", fake_get_variant)
+    monkeypatch.setattr(queries, "update_product_variant", fake_update)
+    main.app.dependency_overrides[get_tenant] = fake_tenant
+    try:
+        client = TestClient(main.app)
+        listed = client.get("/products/product-1/variants")
+        created = client.post(
+            "/products/product-1/variants",
+            json={"name": "Weiß", "sku": "WHITE-1", "gtin": "4006381333931"},
+        )
+        updated = client.patch(
+            "/products/product-1/variants/variant-1", json={"our_price": 119.9}
+        )
+        foreign = client.patch(
+            "/products/product-1/variants/foreign-product-variant", json={"name": "Nein"}
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["name"] == "Schwarz"
+    assert created.status_code == 201
+    assert created.json()["gtin"] == "4006381333931"
+    assert updated.status_code == 200
+    assert updated.json()["our_price"] == 119.9
+    assert foreign.status_code == 404
+
+
+def test_due_scrape_targets_use_each_sources_last_success(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from db import queries
+
+    now = datetime.now(timezone.utc)
+
+    async def fake_targets(_tenant_id):
+        return [
+            {
+                "competitor_product_id": "stale",
+                "scrape_freq_h": 6,
+                "last_scraped_at": (now - timedelta(hours=7)).isoformat(),
+            },
+            {
+                "competitor_product_id": "fresh",
+                "scrape_freq_h": 6,
+                "last_scraped_at": (now - timedelta(hours=5)).isoformat(),
+            },
+            {"competitor_product_id": "new", "scrape_freq_h": 12, "last_scraped_at": None},
+        ]
+
+    monkeypatch.setattr(queries, "get_scrape_targets", fake_targets)
+
+    due = asyncio.run(queries.get_due_scrape_targets("tenant-1"))
+
+    assert [row["competitor_product_id"] for row in due] == ["stale", "new"]
+
+
 def test_mapping_create_rejects_tenant_foreign_references(monkeypatch):
     import main
     from db import queries
@@ -767,6 +1047,7 @@ def test_mapping_create_rejects_tenant_foreign_references(monkeypatch):
             "/products/product-1/mappings",
             json={
                 "competitor_id": "foreign-competitor",
+                "variant_id": "variant-1",
                 "competitor_url": "https://shop.example/product",
             },
         )
@@ -1070,9 +1351,10 @@ def test_shopify_import_creates_connector_and_products_for_agency(monkeypatch):
 
     async def fake_fetch_shopify_products(_shop_domain, _access_token):
         yield {
+            "id": "product-remote-1",
             "title": "Grow Light",
             "handle": "grow-light",
-            "variants": [{"price": 129.9, "sku": "GL-1"}],
+            "variants": [{"id": "variant-remote-1", "title": "Standard", "price": 129.9, "sku": "GL-1", "gtin": "4006381333931"}],
         }
 
     async def fake_count_active_products(tenant_id):
@@ -1084,17 +1366,19 @@ def test_shopify_import_creates_connector_and_products_for_agency(monkeypatch):
 
     async def fake_create_connector_source(tenant_id, values):
         connectors.append((tenant_id, values))
-        return values
+        return {"id": "connector-1", **values}
 
-    async def fake_create_product(tenant_id, values):
-        products.append((tenant_id, values))
-        return values
+    async def fake_upsert_catalog(tenant, connector_id, catalog):
+        products.extend(catalog)
+        assert tenant["id"] == "tenant-1"
+        assert connector_id == "connector-1"
+        return {"items_seen": 1, "items_imported": 1, "items_updated": 0, "items_failed": 0}
 
     monkeypatch.setenv("CONNECTOR_ENCRYPTION_KEY", "test-secret-for-connectors")
     monkeypatch.setattr(shopify, "fetch_shopify_products", fake_fetch_shopify_products)
     monkeypatch.setattr(queries, "count_active_products", fake_count_active_products)
     monkeypatch.setattr(queries, "create_connector_source", fake_create_connector_source)
-    monkeypatch.setattr(queries, "create_product", fake_create_product)
+    monkeypatch.setattr(shopify, "_upsert_catalog", fake_upsert_catalog)
     main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
     try:
         client = TestClient(main.app)
@@ -1106,21 +1390,68 @@ def test_shopify_import_creates_connector_and_products_for_agency(monkeypatch):
         main.app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {"imported": 1}
+    assert response.json() == {"imported": 1, "updated": 0}
     assert connectors[0][0] == "tenant-1"
     assert "access_token_ciphertext" in connectors[0][1]["config"]
     assert connectors[0][1]["config"]["access_token_ciphertext"] != "shpat_testtoken"
-    assert products == [
-        (
-            "tenant-1",
-            {
-                "name": "Grow Light",
-                "our_sku": "GL-1",
-                "our_price": 129.9,
-                "our_currency": "EUR",
-            },
+    assert products[0]["remote_id"] == "product-remote-1"
+    assert products[0]["variants"][0]["remote_id"] == "variant-remote-1"
+    assert products[0]["variants"][0]["gtin"] == "4006381333931"
+
+
+def test_catalog_upsert_creates_variant_store_references(monkeypatch):
+    from db import queries
+    from jobs.connector_tasks import _upsert_catalog
+
+    async def empty_products(_tenant_id):
+        return []
+
+    async def empty_variants(_tenant_id, product_id=None, active_only=False):
+        assert product_id is None
+        return []
+
+    async def create_product(tenant_id, values):
+        assert tenant_id == "tenant-1"
+        return {"id": "product-1", "active": True, **values}
+
+    created_variants = []
+
+    async def create_variant(tenant_id, product_id, values):
+        assert (tenant_id, product_id) == ("tenant-1", "product-1")
+        row = {"id": f"variant-{len(created_variants) + 1}", "product_id": product_id, **values}
+        created_variants.append(row)
+        return row
+
+    monkeypatch.setattr(queries, "list_products", empty_products)
+    monkeypatch.setattr(queries, "list_product_variants", empty_variants)
+    monkeypatch.setattr(queries, "create_product", create_product)
+    monkeypatch.setattr(queries, "create_product_variant", create_variant)
+
+    result = asyncio.run(
+        _upsert_catalog(
+            {"id": "tenant-1", "plan": "agency"},
+            "connector-1",
+            [
+                {
+                    "remote_id": "remote-product",
+                    "name": "Lampe",
+                    "variants": [
+                        {"remote_id": "remote-black", "name": "Schwarz", "sku": "L-B", "price": 99},
+                        {"remote_id": "remote-white", "name": "Weiß", "sku": "L-W", "price": 109},
+                    ],
+                }
+            ],
         )
-    ]
+    )
+
+    assert result["items_imported"] == 1
+    assert len(created_variants) == 2
+    assert created_variants[0]["is_default"] is True
+    assert created_variants[1]["external_refs"] == {
+        "connector_id": "connector-1",
+        "product_id": "remote-product",
+        "variant_id": "remote-white",
+    }
 
 
 def test_connector_source_list_is_plan_gated_and_redacts_secret_config(monkeypatch):
@@ -2347,7 +2678,7 @@ def test_billing_checkout_creates_viva_order(monkeypatch):
     assert response.json() == {"url": "https://viva.example/1234567890123456"}
     assert calls == [
         {"tenant_id": "tenant-1", "email": "owner@example.com", "plan": "pro"},
-        {"tenant_id": "tenant-1", "order_code": 1234567890123456, "plan": "pro", "amount_cents": 2900},
+            {"tenant_id": "tenant-1", "order_code": 1234567890123456, "plan": "pro", "amount_cents": 3451},
     ]
 
 
@@ -2467,10 +2798,17 @@ def test_viva_webhook_verifies_payment_and_activates_plan(monkeypatch):
             }
 
     async def fake_get_order(_code):
-        return {"tenant_id": "tenant-1", "order_code": 2271655739472609, "plan": "pro", "amount_cents": 2900, "status": "pending"}
+        return {"id": "order-1", "tenant_id": "tenant-1", "order_code": 2271655739472609, "plan": "pro", "amount_cents": 3451, "status": "pending"}
 
     async def fake_retrieve(_transaction_id):
-        return {"orderCode": 2271655739472609, "statusId": "F", "amount": 29.0, "sourceCode": "1234"}
+        return {"orderCode": 2271655739472609, "statusId": "F", "amount": 34.51, "sourceCode": "1234"}
+
+    async def fake_get_tenant(tenant_id):
+        return {"id": tenant_id, "shop_name": "Shop"}
+
+    async def fake_invoice(**values):
+        assert values["plan"] == "pro"
+        return {"id": "invoice-1"}
 
     updates = []
     async def fake_update_order(code, values):
@@ -2483,7 +2821,9 @@ def test_viva_webhook_verifies_payment_and_activates_plan(monkeypatch):
     monkeypatch.setattr(queries, "get_billing_order", fake_get_order)
     monkeypatch.setattr(queries, "update_billing_order", fake_update_order)
     monkeypatch.setattr(queries, "update_tenant", fake_update_tenant)
+    monkeypatch.setattr(queries, "get_tenant_by_id", fake_get_tenant)
     monkeypatch.setattr(viva_handler.viva, "retrieve_transaction", fake_retrieve)
+    monkeypatch.setattr(viva_handler, "create_paid_invoice", fake_invoice)
 
     result = asyncio.run(viva_handler.handle_viva_webhook(FakeRequest()))
 
@@ -2969,19 +3309,21 @@ def test_scrape_all_enqueues_every_tenant_target(monkeypatch):
     assert redis.jobs == [
         (
             ("scrape_target",),
-            {
-                "competitor_product_id": "tenant-1-mapping",
-                "tenant_id": "tenant-1",
-                "quota_reserved": True,
-            },
+                {
+                    "competitor_product_id": "tenant-1-mapping",
+                    "tenant_id": "tenant-1",
+                    "quota_reserved": True,
+                    "_job_id": redis.jobs[0][1]["_job_id"],
+                },
         ),
         (
             ("scrape_target",),
             {
-                "competitor_product_id": "tenant-2-mapping",
-                "tenant_id": "tenant-2",
-                "quota_reserved": True,
-            },
+                    "competitor_product_id": "tenant-2-mapping",
+                    "tenant_id": "tenant-2",
+                    "quota_reserved": True,
+                    "_job_id": redis.jobs[1][1]["_job_id"],
+                },
         ),
     ]
     assert released == [("tenant-1", 0), ("tenant-2", 1)]
@@ -2997,6 +3339,49 @@ def test_alert_percentage_conditions_match_delta_semantics():
     assert not AlertAgent.evaluate({"condition": "below_pct", "threshold": 10}, pricier_row)
     assert AlertAgent.evaluate({"condition": "above_pct", "threshold": 10}, pricier_row)
     assert not AlertAgent.evaluate({"condition": "above_pct", "threshold": 10}, cheaper_row)
+
+    stock_change = {"previous_in_stock": True, "in_stock": False}
+    unchanged_stock = {"previous_in_stock": False, "in_stock": False}
+    assert AlertAgent.evaluate({"condition": "out_of_stock"}, stock_change)
+    assert not AlertAgent.evaluate({"condition": "out_of_stock"}, unchanged_stock)
+
+    price_change = {"previous_competitor_price": 100, "competitor_price": 89}
+    assert AlertAgent.evaluate(
+        {"condition": "price_drop", "threshold": 10, "threshold_unit": "percent"},
+        price_change,
+    )
+    assert AlertAgent.evaluate(
+        {"condition": "price_drop", "threshold": 10, "threshold_unit": "absolute"},
+        price_change,
+    )
+    assert AlertAgent.evaluate(
+        {"condition": "source_broken", "threshold": 3},
+        {"health_status": "broken", "consecutive_failures": 3},
+    )
+
+
+def test_daily_digest_is_german_and_formats_euro_values():
+    from jobs.digest_tasks import _digest_text
+
+    text = _digest_text(
+        "Mein Shop",
+        "2026-07-03",
+        [
+            {
+                "trigger_reason": "price_drop",
+                "competitor_price": 1234.5,
+                "competitor_products": {
+                    "products": {"name": "Lampe"},
+                    "competitors": {"shop_name": "Markt"},
+                },
+            }
+        ],
+    )
+
+    assert "PriceVault Tagesübersicht für Mein Shop" in text
+    assert "Neue Ereignisse: 1" in text
+    assert "1.234,50 €" in text
+    assert "/dashboard/alerts" in text
 
 
 def test_alert_channels_deliver_when_email_fails(monkeypatch):
@@ -3033,6 +3418,9 @@ def test_alert_channels_deliver_when_email_fails(monkeypatch):
             }
         ]
 
+    async def fake_snapshots(_tenant_id):
+        return []
+
     events = []
     updates = []
 
@@ -3054,6 +3442,7 @@ def test_alert_channels_deliver_when_email_fails(monkeypatch):
 
     monkeypatch.setattr(queries, "get_latest_prices", fake_latest_prices)
     monkeypatch.setattr(queries, "list_alerts", fake_alerts)
+    monkeypatch.setattr(queries, "list_recent_snapshots", fake_snapshots)
     monkeypatch.setattr(queries, "insert_alert_event", fake_insert_alert_event)
     monkeypatch.setattr(queries, "update_alert", fake_update_alert)
     monkeypatch.setattr(AlertAgent, "_deliver_channels", fake_deliver_channels)
@@ -3567,9 +3956,10 @@ def test_shopify_catalog_fetches_products_across_pages(monkeypatch):
             {
                 "products": [
                     {
+                        "id": 1,
                         "title": "Produkt 1",
                         "handle": "produkt-1",
-                        "variants": [{"price": "10.50", "sku": "SKU-1"}],
+                        "variants": [{"id": 11, "title": "Standard", "price": "10.50", "sku": "SKU-1", "barcode": "4006381333931"}],
                     }
                 ]
             },
@@ -3581,9 +3971,10 @@ def test_shopify_catalog_fetches_products_across_pages(monkeypatch):
             {
                 "products": [
                     {
+                        "id": 2,
                         "title": "Produkt 2",
                         "handle": "produkt-2",
-                        "variants": [{"price": "20.00", "sku": ""}],
+                        "variants": [{"id": 22, "title": "Standard", "price": "20.00", "sku": ""}],
                     }
                 ]
             }
@@ -3613,8 +4004,8 @@ def test_shopify_catalog_fetches_products_across_pages(monkeypatch):
 
     assert [product["title"] for product in products] == ["Produkt 1", "Produkt 2"]
     assert products[0]["url"] == "https://shop.myshopify.com/products/produkt-1"
-    assert products[0]["variants"] == [{"price": 10.5, "sku": "SKU-1"}]
-    assert products[1]["variants"] == [{"price": 20.0, "sku": None}]
+    assert products[0]["variants"] == [{"id": "11", "title": "Standard", "price": 10.5, "sku": "SKU-1", "gtin": "4006381333931"}]
+    assert products[1]["variants"] == [{"id": "22", "title": "Standard", "price": 20.0, "sku": None, "gtin": None}]
     assert requests[0] == (
         "https://shop.myshopify.com/admin/api/2024-04/products.json?limit=250",
         {"X-Shopify-Access-Token": "shpat_token"},
@@ -3682,6 +4073,10 @@ def test_competitor_routes_are_tenant_scoped(monkeypatch):
         assert values["base_url"] == "https://shop.example/"
         return {"id": "competitor-1", **values}
 
+    async def fake_count(tenant_id):
+        assert tenant_id == "tenant-1"
+        return 0
+
     async def fake_get(tenant_id, competitor_id):
         assert tenant_id == "tenant-1"
         if competitor_id == "competitor-1":
@@ -3700,6 +4095,7 @@ def test_competitor_routes_are_tenant_scoped(monkeypatch):
 
     monkeypatch.setattr(queries, "list_competitors", fake_list)
     monkeypatch.setattr(queries, "create_competitor", fake_create)
+    monkeypatch.setattr(queries, "count_active_competitors", fake_count)
     monkeypatch.setattr(queries, "get_competitor", fake_get)
     monkeypatch.setattr(queries, "update_competitor", fake_update)
     monkeypatch.setattr(queries, "soft_delete_competitor", fake_delete)
@@ -3713,7 +4109,7 @@ def test_competitor_routes_are_tenant_scoped(monkeypatch):
         )
         fetched = client.get("/competitors/competitor-1")
         missing = client.get("/competitors/missing")
-        updated = client.patch("/competitors/competitor-1", json={"scrape_freq_h": 6})
+        updated = client.patch("/competitors/competitor-1", json={"scrape_freq_h": 12})
         invalid_update = client.patch("/competitors/competitor-1", json={"shop_name": ""})
         missing_update = client.patch("/competitors/missing", json={"active": False})
         deleted = client.delete("/competitors/competitor-1")
@@ -3725,7 +4121,7 @@ def test_competitor_routes_are_tenant_scoped(monkeypatch):
     assert created.status_code == 201
     assert fetched.status_code == 200
     assert missing.status_code == 404
-    assert updated.json() == {"id": "competitor-1", "scrape_freq_h": 6}
+    assert updated.json() == {"id": "competitor-1", "scrape_freq_h": 12}
     assert invalid_update.status_code == 422
     assert missing_update.status_code == 404
     assert deleted.status_code == 204

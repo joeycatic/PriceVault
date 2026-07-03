@@ -7,7 +7,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_ADMIN_CONTEXT_CALLERS = {
     Path("auth/api_key_middleware.py"),
     Path("jobs/billing_tasks.py"),
+    Path("jobs/connector_tasks.py"),
+    Path("jobs/digest_tasks.py"),
+    Path("jobs/insight_tasks.py"),
     Path("jobs/retry.py"),
+    Path("jobs/report_tasks.py"),
     Path("jobs/scrape_tasks.py"),
     Path("scheduler.py"),
     Path("webhooks/viva_handler.py"),
@@ -62,3 +66,22 @@ def test_service_role_usage_stays_in_trusted_server_paths():
 
     assert admin_context_callers == ALLOWED_ADMIN_CONTEXT_CALLERS
     assert admin_client_callers == ALLOWED_ADMIN_CLIENT_CALLERS
+
+
+def test_rls_reference_covers_schema_tables_and_requires_accepted_membership():
+    schema = (ROOT / "db" / "schema.sql").read_text()
+    reference = (ROOT.parent / "infra" / "supabase-rls.sql").read_text()
+    tables = {
+        line.split()[2]
+        for line in schema.splitlines()
+        if line.startswith("alter table public.") and "enable row level security" in line
+    }
+
+    for table in tables:
+        statement = f"alter table {table}"
+        assert statement in reference, f"{table} is missing from the RLS reference"
+
+    membership_policy = reference.split(
+        'create policy "tenants: visible membership"', 1
+    )[1].split("create policy", 1)[0]
+    assert "and accepted = true" in membership_policy

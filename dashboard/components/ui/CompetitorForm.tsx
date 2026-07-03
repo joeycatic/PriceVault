@@ -14,10 +14,12 @@ type TestResult = {
 
 export function CompetitorForm({
   competitor,
+  minimumFrequency,
   saveAction,
   testAction,
 }: {
   competitor?: Competitor
+  minimumFrequency: number
   saveAction: (formData: FormData) => Promise<ActionResult>
   testAction: (input: {
     url: string
@@ -25,6 +27,9 @@ export function CompetitorForm({
     selectorStock: string
   }) => Promise<TestResult>
 }) {
+  const frequencies = [1, 6, 12, 24, 48, 168].filter(
+    (frequency) => frequency >= minimumFrequency || frequency === competitor?.scrape_freq_h,
+  )
   const formRef = useRef<HTMLFormElement>(null)
   const [pending, startTransition] = useTransition()
   const [result, setResult] = useState<ActionResult | null>(null)
@@ -79,10 +84,12 @@ export function CompetitorForm({
         </label>
         <label>
           <span className="field-label">Abrufintervall</span>
-          <select className="field" name="scrape_freq_h" defaultValue={competitor?.scrape_freq_h ?? 12}>
-            <option value="6">Alle 6 Stunden</option>
-            <option value="12">Alle 12 Stunden</option>
-            <option value="24">Alle 24 Stunden</option>
+          <select className="field" name="scrape_freq_h" defaultValue={competitor?.scrape_freq_h ?? minimumFrequency}>
+            {frequencies.map((frequency) => (
+              <option key={frequency} value={frequency}>
+                {frequency === 1 ? 'Stündlich' : `Alle ${frequency} Stunden`}
+              </option>
+            ))}
           </select>
         </label>
       </div>

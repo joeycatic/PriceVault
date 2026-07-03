@@ -78,6 +78,8 @@ async def _scrape_target(
                 error,
                 failed_at=datetime.now(timezone.utc).isoformat(),
             )
+        with suppress(Exception):
+            await AlertAgent().run(tenant_id)
         await maybe_retry_or_dlq(
             ctx,
             tenant_id=tenant_id,
@@ -127,6 +129,8 @@ async def _scrape_target(
                 result.error_msg or "Preisabruf fehlgeschlagen",
                 failed_at=result.scraped_at.isoformat(),
             )
+        with suppress(Exception):
+            await AlertAgent().run(tenant_id)
         if scrape_job:
             with suppress(Exception):
                 await queries.finish_scrape_job(
@@ -160,6 +164,13 @@ async def _scrape_target(
                     },
                 )
         await AlertAgent().run(tenant_id)
+        if ctx.get("redis"):
+            await ctx["redis"].enqueue_job(
+                "generate_product_insight",
+                tenant_id=tenant_id,
+                competitor_product_id=competitor_product_id,
+                _job_id=f"insight-{competitor_product_id}-{int(result.scraped_at.timestamp())}",
+            )
     elif scrape_job:
         with suppress(Exception):
             await queries.mark_source_scrape_success(
@@ -212,11 +223,14 @@ async def scrape_all(ctx: dict) -> dict[str, int]:
             accepted = 0
             try:
                 for row in rows[:reserved]:
+                    frequency_h = max(1, int(row.get("scrape_freq_h") or 12))
+                    bucket = int(datetime.now(timezone.utc).timestamp() // (frequency_h * 3600))
                     job = await ctx["redis"].enqueue_job(
                         "scrape_target",
                         competitor_product_id=row["competitor_product_id"],
                         tenant_id=tenant["id"],
                         quota_reserved=True,
+                        _job_id=f"scrape-{row['competitor_product_id']}-{bucket}",
                     )
                     if job:
                         queued += 1

@@ -5,6 +5,7 @@ import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { PriceTable } from '@/components/ui/PriceTable'
 import { currentTenant } from '@/lib/backend'
+import { minimumScrapeFrequency } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { LatestPrice } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
@@ -39,10 +40,16 @@ export default async function DashboardPage() {
   const activePrices = rows.filter((row) => row.competitor_price !== null).length
   const undercut = rows.filter((row) => Number(row.delta_pct ?? 0) < 0).length
   const unavailable = rows.filter((row) => row.in_stock === false).length
+  const trackedProducts = new Set(rows.map((row) => row.product_id)).size
+  const priceLeaders = new Set(rows.filter((row) => Number(row.delta_pct ?? 0) > 0).map((row) => row.product_id)).size
+  const sourceUptime = priceSourceCount
+    ? ((priceSourceCount - unhealthySourceCount) / priceSourceCount) * 100
+    : 0
   const lastScrapedAt = rows
     .map((row) => row.scraped_at)
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
+  const planFrequency = minimumScrapeFrequency(tenant?.plan)
 
   return (
     <>
@@ -53,18 +60,22 @@ export default async function DashboardPage() {
         actions={<div className="flex flex-col items-start gap-2 sm:items-end">
           <div className="flex items-center gap-2 text-xs text-vault-500">
             <span className="h-2 w-2 rounded-full bg-merchant-success" />
-            Automatisch alle 12 Stunden
+            Tarifintervall ab {planFrequency} Std.
           </div>
-          <ManualScrapeButton action={runManualScrape} disabled={!priceSourceCount} compact />
+          <div className="flex flex-wrap gap-2">
+            <a className="button-secondary" href="/api/export/csv">CSV</a>
+            <a className="button-secondary" href="/api/export/pdf">PDF</a>
+            <ManualScrapeButton action={runManualScrape} disabled={!priceSourceCount} compact />
+          </div>
         </div>}
       />
 
       <div className="mb-6">
         <MetricGrid items={[
-          { label: 'Preise erfasst', value: activePrices, detail: `${priceSourceCount} aktive Quellen`, tone: 'success' },
-          { label: 'Handlungsbedarf', value: undercut, detail: 'Produkte unterboten', tone: undercut ? 'warning' : 'success' },
-          { label: 'Nicht verfügbar', value: unavailable, detail: 'Aktuell nicht lieferbar', tone: unavailable ? 'danger' : 'success' },
-          { label: 'Quellenstatus', value: unhealthySourceCount, detail: 'Degradiert oder defekt', tone: unhealthySourceCount ? 'danger' : 'success' },
+          { label: 'Verfolgte Produkte', value: trackedProducts, detail: `${priceSourceCount} aktive Quellen`, tone: 'success' },
+          { label: 'Handlungsbedarf', value: undercut + unavailable + unhealthySourceCount, detail: 'Preis, Bestand oder Quelle', tone: undercut + unavailable + unhealthySourceCount ? 'warning' : 'success' },
+          { label: 'Preisführer', value: priceLeaders, detail: 'Eigener Preis ist niedriger', tone: 'success' },
+          { label: 'Quellenverfügbarkeit', value: `${sourceUptime.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`, detail: `${activePrices} Preise erfasst`, tone: unhealthySourceCount ? 'danger' : 'success' },
           { label: 'Letzter Abruf', value: lastScrapedAt ? formatRelativeTime(lastScrapedAt) : 'Noch nie', detail: 'Automatischer Preisabruf', tone: 'neutral' },
         ]} />
       </div>
@@ -96,7 +107,7 @@ export default async function DashboardPage() {
             <section className="panel p-6" aria-labelledby="empty-prices">
               <h2 id="empty-prices" className="text-lg font-semibold">Noch keine gescrapten Preise</h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-vault-300">
-                Lege unter Produkte eine Preisquelle an. Danach werden die Preise automatisch alle 12 Stunden gescraped oder sofort manuell abgerufen.
+                Lege unter Produkte eine Preisquelle an. Danach werden die Preise nach dem gewählten Intervall automatisch oder sofort manuell abgerufen.
               </p>
               <Link href="/dashboard/products" className="button-primary mt-5">Produkte & Preisquellen öffnen →</Link>
             </section>

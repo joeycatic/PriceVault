@@ -4,19 +4,20 @@ import Link from 'next/link'
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { MutationButton } from '@/components/ui/MutationButton'
-import { MappingForm, ProductForm, ProductImportForm } from '@/components/ui/ProductForms'
+import { MappingForm, MatchSuggestionForm, ProductForm, ProductImportForm, VariantForm } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
 import { ExportButton } from '@/app/dashboard/products/[id]/ExportButton'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { parsePriceInput } from '@/lib/priceInput'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, CompetitorProduct, LatestPrice, Product } from '@/lib/types'
+import type { Competitor, CompetitorProduct, LatestPrice, MatchSuggestion, Product, ProductVariant } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
 
 type MappingRow = CompetitorProduct & {
   products: { name: string } | null
-  competitors: { shop_name: string } | null
+  product_variants: { name: string; sku: string | null; our_price: number | null; currency: string } | null
+  competitors: { shop_name: string; scrape_freq_h: number } | null
 }
 
 function splitProductLine(line: string) {
@@ -55,24 +56,33 @@ export default async function ProductsPage() {
   const supabase = await createClient()
   const tenant = await currentTenant()
 
-  const [productResult, competitorResult, mappingResult, latestResult] = tenant
+  const [productResult, variantResult, competitorResult, mappingResult, latestResult, suggestionResult] = tenant
     ? await Promise.all([
         supabase.from('products').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
+        supabase.from('product_variants').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
         supabase.from('competitors').select('*').eq('tenant_id', tenant.id).eq('active', true).order('shop_name'),
         supabase
           .from('competitor_products')
-          .select('*, products(name), competitors(shop_name)')
+          .select('*, products(name), product_variants(name,sku,our_price,currency), competitors(shop_name,scrape_freq_h)')
           .eq('tenant_id', tenant.id)
           .eq('active', true)
           .order('created_at'),
         supabase.from('v_latest_prices').select('*').eq('tenant_id', tenant.id),
+        supabase
+          .from('match_suggestions')
+          .select('*, products(name), product_variants(name,sku,gtin), competitors(shop_name)')
+          .eq('tenant_id', tenant.id)
+          .eq('status', 'pending')
+          .order('confidence', { ascending: false }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }]
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }]
 
   const products = (productResult.data ?? []) as Product[]
+  const variants = (variantResult.data ?? []) as ProductVariant[]
   const competitors = (competitorResult.data ?? []) as Competitor[]
   const mappings = (mappingResult.data ?? []) as MappingRow[]
   const latestRows = (latestResult.data ?? []) as LatestPrice[]
+  const suggestions = (suggestionResult.data ?? []) as MatchSuggestion[]
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
   const productLimit = planLimit(tenant?.plan).products
   const unhealthyMappings = mappings.filter((mapping) => ['degraded', 'broken'].includes(mapping.health_status))
@@ -99,14 +109,28 @@ export default async function ProductsPage() {
         return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Produkte.` }
       }
     }
-    const { error } = await client.from('products').insert({
+    const sku = String(formData.get('our_sku') || '') || null
+    const { data: product, error } = await client.from('products').insert({
       tenant_id: tenant.id,
       name,
-      our_sku: String(formData.get('our_sku') || '') || null,
+      our_sku: sku,
       our_price: price,
       our_currency: 'EUR',
+    }).select('id').single()
+    if (error || !product) return { ok: false, message: 'Das Produkt konnte nicht angelegt werden.' }
+    const { error: variantError } = await client.from('product_variants').insert({
+      tenant_id: tenant.id,
+      product_id: product.id,
+      name: 'Standard',
+      sku,
+      our_price: price,
+      currency: 'EUR',
+      is_default: true,
     })
-    if (error) return { ok: false, message: 'Das Produkt konnte nicht angelegt werden.' }
+    if (variantError) {
+      await client.from('products').delete().eq('tenant_id', tenant.id).eq('id', product.id)
+      return { ok: false, message: 'Die Standardvariante konnte nicht angelegt werden.' }
+    }
     revalidatePath('/dashboard/products')
     return { ok: true, message: 'Produkt wurde angelegt.' }
   }
@@ -139,12 +163,58 @@ export default async function ProductsPage() {
       }
     }
 
-    const { error } = await client.from('products').insert(rows.map((row) => ({ ...row, tenant_id: tenant.id })))
-    if (error) return { ok: false, message: 'Die Produkte konnten nicht importiert werden.' }
+    const { data: inserted, error } = await client
+      .from('products')
+      .insert(rows.map((row) => ({ ...row, tenant_id: tenant.id })))
+      .select('id,our_sku,our_price,our_currency')
+    if (error || !inserted) return { ok: false, message: 'Die Produkte konnten nicht importiert werden.' }
+    const { error: variantError } = await client.from('product_variants').insert(inserted.map((product) => ({
+      tenant_id: tenant.id,
+      product_id: product.id,
+      name: 'Standard',
+      sku: product.our_sku,
+      our_price: product.our_price,
+      currency: product.our_currency,
+      is_default: true,
+    })))
+    if (variantError) return { ok: false, message: 'Produkte importiert, aber Varianten konnten nicht angelegt werden.' }
 
     revalidatePath('/dashboard/products')
     revalidatePath('/dashboard')
     return { ok: true, message: `${rows.length} Produkt(e) importiert.` }
+  }
+
+  async function createVariant(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const client = await createClient()
+    const productId = String(formData.get('product_id') ?? '')
+    const name = String(formData.get('name') ?? '').trim()
+    const rawPrice = String(formData.get('our_price') ?? '').trim()
+    const rawCost = String(formData.get('cost_price') ?? '').trim()
+    const price = rawPrice ? parsePriceInput(rawPrice) : null
+    const cost = rawCost ? parsePriceInput(rawCost) : null
+    if (!productId || !name || (rawPrice && price === null) || (rawCost && cost === null)) {
+      return { ok: false, message: 'Bitte prüfe Produkt, Variantenname und Preise.' }
+    }
+    const { data: product } = await client.from('products').select('id').eq('tenant_id', tenant.id).eq('id', productId).maybeSingle()
+    if (!product) return { ok: false, message: 'Produkt nicht gefunden.' }
+    const gtin = String(formData.get('gtin') ?? '').trim()
+    const { error } = await client.from('product_variants').insert({
+      tenant_id: tenant.id,
+      product_id: productId,
+      name,
+      sku: String(formData.get('sku') ?? '').trim() || null,
+      gtin: gtin || null,
+      our_price: price,
+      cost_price: cost,
+      currency: 'EUR',
+      is_default: false,
+    })
+    if (error) return { ok: false, message: 'Variante konnte nicht angelegt werden. SKU und GTIN müssen eindeutig sein.' }
+    revalidatePath('/dashboard/products')
+    revalidatePath(`/dashboard/products/${productId}`)
+    return { ok: true, message: 'Variante wurde angelegt.' }
   }
 
   async function createMapping(formData: FormData) {
@@ -153,13 +223,23 @@ export default async function ProductsPage() {
     const client = await createClient()
     const productId = String(formData.get('product_id') ?? '')
     const competitorId = String(formData.get('competitor_id') ?? '')
+    const variantId = String(formData.get('variant_id') ?? '')
     const competitorUrl = String(formData.get('competitor_url') ?? '').trim()
-    if (!productId || !competitorId || !competitorUrl) {
-      return { ok: false, message: 'Produkt, Mitbewerber und URL sind erforderlich.' }
+    if (!productId || !variantId || !competitorId || !competitorUrl) {
+      return { ok: false, message: 'Produkt, Variante, Mitbewerber und URL sind erforderlich.' }
     }
+    const { data: variant } = await client
+      .from('product_variants')
+      .select('id')
+      .eq('tenant_id', tenant.id)
+      .eq('product_id', productId)
+      .eq('id', variantId)
+      .maybeSingle()
+    if (!variant) return { ok: false, message: 'Die Variante gehört nicht zum ausgewählten Produkt.' }
     const { data, error } = await client.from('competitor_products').insert({
       tenant_id: tenant.id,
       product_id: productId,
+      variant_id: variantId,
       competitor_id: competitorId,
       competitor_url: competitorUrl,
       competitor_sku: String(formData.get('competitor_sku') || '') || null,
@@ -184,6 +264,58 @@ export default async function ProductsPage() {
     revalidatePath('/dashboard/products')
     revalidatePath('/dashboard')
     return { ok: true, message: 'Preisquelle wurde zugeordnet.' }
+  }
+
+  async function generateSuggestions(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    try {
+      const response = await backendFetch('/match/suggestions/generate', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({
+          variant_id: String(formData.get('variant_id') ?? ''),
+          competitor_id: String(formData.get('competitor_id') ?? ''),
+        }),
+        signal: AbortSignal.timeout(120_000),
+      })
+      const payload = await response.json()
+      if (!response.ok) return { ok: false, message: payload.detail ?? 'Die Vorschlagssuche ist fehlgeschlagen.' }
+      revalidatePath('/dashboard/products')
+      return {
+        ok: true,
+        message: payload.length ? `${payload.length} Vorschlag/Vorschläge gefunden.` : 'Keine passenden Produktseiten gefunden.',
+      }
+    } catch {
+      return { ok: false, message: 'Der Matcher-Dienst ist nicht erreichbar.' }
+    }
+  }
+
+  async function reviewSuggestion(formData: FormData, decision: 'approve' | 'reject') {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const id = String(formData.get('id') ?? '')
+    try {
+      const response = await backendFetch(`/match/suggestions/${id}/${decision}`, tenant.id, {
+        method: 'POST',
+      })
+      const payload = await response.json()
+      if (!response.ok) return { ok: false, message: payload.detail ?? 'Der Vorschlag konnte nicht bearbeitet werden.' }
+      revalidatePath('/dashboard/products')
+      revalidatePath('/dashboard')
+      return { ok: true, message: decision === 'approve' ? 'Vorschlag freigegeben.' : 'Vorschlag abgelehnt.' }
+    } catch {
+      return { ok: false, message: 'Der Matcher-Dienst ist nicht erreichbar.' }
+    }
+  }
+
+  async function approveSuggestion(formData: FormData) {
+    'use server'
+    return reviewSuggestion(formData, 'approve')
+  }
+
+  async function rejectSuggestion(formData: FormData) {
+    'use server'
+    return reviewSuggestion(formData, 'reject')
   }
 
   async function repairSource(formData: FormData) {
@@ -261,14 +393,14 @@ export default async function ProductsPage() {
                 <p className="eyebrow">Preisabruf</p>
                 <h2 id="scrape-clarity" className="mt-2 text-xl font-semibold">Wann werden Preise gescraped?</h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">
-                  PriceVault ruft aktive Preisquellen automatisch alle 12 Stunden ab. Nach dem Anlegen oder Ändern einer Quelle kannst du sofort einen manuellen Abruf starten.
+                  PriceVault ruft jede aktive Preisquelle nach ihrem hinterlegten Intervall ab. Der nächste Lauf wird aus dem letzten erfolgreichen Abruf berechnet; einen manuellen Abruf kannst du jederzeit starten.
                 </p>
               </div>
               <ManualScrapeButton action={runManualScrape} disabled={!mappings.length} />
             </div>
           </section>
 
-          <div className="grid items-start gap-6 xl:grid-cols-2">
+          <div className="grid items-start gap-6 xl:grid-cols-3">
             <section className="panel p-5 sm:p-6" aria-labelledby="new-product">
               <p className="eyebrow">Importoption 01</p>
               <h2 id="new-product" className="mb-5 mt-2 text-xl font-semibold">Ein Produkt manuell anlegen</h2>
@@ -279,6 +411,11 @@ export default async function ProductsPage() {
               <p className="eyebrow">Importoption 02 / 03</p>
               <h2 id="bulk-import" className="mb-5 mt-2 text-xl font-semibold">Produkte per CSV importieren</h2>
               <ProductImportForm action={importProducts} />
+            </section>
+            <section className="panel p-5 sm:p-6" aria-labelledby="new-variant">
+              <p className="eyebrow">Varianten</p>
+              <h2 id="new-variant" className="mb-5 mt-2 text-xl font-semibold">Variante ergänzen</h2>
+              <VariantForm action={createVariant} products={products} />
             </section>
           </div>
 
@@ -297,13 +434,53 @@ export default async function ProductsPage() {
             </section>
           )}
 
-          <div className="grid items-start gap-6 xl:grid-cols-2">
-            <section className="panel p-5 sm:p-6" aria-labelledby="new-mapping">
-              <p className="eyebrow">Preisquelle</p>
-              <h2 id="new-mapping" className="mb-5 mt-2 text-xl font-semibold">Zuordnung anlegen</h2>
-              <MappingForm action={createMapping} products={products} competitors={competitors} />
-            </section>
-          </div>
+          <section className="panel overflow-hidden" aria-labelledby="matching-workspace">
+            <div className="border-b border-vault-700 px-5 py-4 sm:px-6">
+              <p className="eyebrow">Produkt-Matching</p>
+              <h2 id="matching-workspace" className="mt-2 text-xl font-semibold">Produkte zuordnen</h2>
+            </div>
+            <div className="grid items-start gap-0 divide-y divide-vault-700 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+              <div className="p-5 sm:p-6">
+                <h3 className="mb-5 font-semibold">Mit URL manuell zuordnen</h3>
+                <MappingForm action={createMapping} products={products} variants={variants} competitors={competitors} />
+              </div>
+              <div className="p-5 sm:p-6">
+                <h3 className="mb-5 font-semibold">Automatische Vorschläge</h3>
+                <MatchSuggestionForm action={generateSuggestions} products={products} variants={variants} competitors={competitors} />
+              </div>
+            </div>
+            <div className="border-t border-vault-700">
+              <div className="flex items-center justify-between px-5 py-4 sm:px-6">
+                <h3 className="font-semibold">Freigabewarteschlange</h3>
+                <span className="font-mono text-xs text-vault-500">{suggestions.length} offen</span>
+              </div>
+              {suggestions.length ? (
+                <div className="divide-y divide-vault-700/70 border-t border-vault-700">
+                  {suggestions.map((suggestion) => (
+                    <article key={suggestion.id} className="grid gap-4 p-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_120px_auto] lg:items-center">
+                      <div className="min-w-0">
+                        <p className="font-semibold">{suggestion.products?.name} · {suggestion.product_variants?.name}</p>
+                        <p className="mt-1 text-sm text-vault-300">{suggestion.candidate_title}</p>
+                        <a className="mt-1 block truncate font-mono text-xs text-merchant-success hover:underline" href={suggestion.candidate_url} target="_blank" rel="noreferrer">
+                          {suggestion.candidate_url}
+                        </a>
+                      </div>
+                      <div>
+                        <p className="font-mono text-sm font-semibold">{Number(suggestion.confidence * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</p>
+                        <p className="mt-1 text-xs text-vault-500">{suggestion.match_method === 'gtin' ? 'GTIN / EAN' : 'Namensabgleich'}</p>
+                      </div>
+                      <div className="flex gap-4 lg:justify-end">
+                        <MutationButton id={suggestion.id} label="Freigeben" pendingLabel="Wird freigegeben …" action={approveSuggestion} tone="neutral" />
+                        <MutationButton id={suggestion.id} label="Ablehnen" pendingLabel="Wird abgelehnt …" action={rejectSuggestion} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="border-t border-vault-700 px-5 py-6 text-sm text-vault-300 sm:px-6">Keine offenen Vorschläge.</p>
+              )}
+            </div>
+          </section>
 
           <section className="panel overflow-hidden" aria-labelledby="product-list">
             <div className="border-b border-vault-700 px-5 py-4">
@@ -320,6 +497,9 @@ export default async function ProductsPage() {
                         </Link>
                       </h3>
                       <p className="mt-1 font-mono text-xs text-vault-500">{product.our_sku ?? 'Keine SKU'} · {formatPrice(product.our_price, product.our_currency)}</p>
+                      <p className="mt-1 text-xs text-vault-500">
+                        {variants.filter((variant) => variant.product_id === product.id).length} Variante(n)
+                      </p>
                     </div>
                     <MutationButton id={product.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivateProduct} />
                   </article>
@@ -342,7 +522,7 @@ export default async function ProductsPage() {
                       <th className="px-5 py-4">Produkt</th>
                       <th className="px-4 py-4">Eigener Preis</th>
                       <th className="px-4 py-4">Mitbewerber</th>
-                      <th className="px-4 py-4">Letzter Abruf</th>
+                      <th className="px-4 py-4">Abrufplan</th>
                       <th className="px-4 py-4">Status</th>
                       <th className="px-4 py-4">Gefundener Preis</th>
                       <th className="px-4 py-4">Produkt-URL</th>
@@ -353,13 +533,24 @@ export default async function ProductsPage() {
                     {mappings.map((mapping) => {
                       const product = products.find((item) => item.id === mapping.product_id)
                       const latest = latestByMapping.get(mapping.id)
+                      const frequency = mapping.competitors?.scrape_freq_h ?? 12
+                      const lastSuccess = mapping.last_successful_scrape_at ?? latest?.scraped_at ?? null
+                      const nextRun = lastSuccess
+                        ? new Date(new Date(lastSuccess).getTime() + frequency * 60 * 60 * 1000).toISOString()
+                        : null
                       return (
                         <tr key={mapping.id} className="border-t border-vault-700/70">
-                          <td className="px-5 py-4 font-semibold">{mapping.products?.name ?? 'Unbekannt'}</td>
-                          <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(product?.our_price ?? null)}</td>
+                          <td className="px-5 py-4 font-semibold">
+                            {mapping.products?.name ?? 'Unbekannt'}
+                            <span className="mt-1 block text-xs font-normal text-vault-500">{mapping.product_variants?.name ?? 'Standard'} · {mapping.product_variants?.sku ?? 'ohne SKU'}</span>
+                          </td>
+                          <td className="px-4 py-4 font-mono text-vault-300">{formatPrice(mapping.product_variants?.our_price ?? product?.our_price ?? null, mapping.product_variants?.currency ?? 'EUR')}</td>
                           <td className="px-4 py-4">{mapping.competitors?.shop_name ?? 'Unbekannt'}</td>
                           <td className="px-4 py-4 text-xs text-vault-300">
-                            {latest?.scraped_at ? formatRelativeTime(latest.scraped_at) : 'Noch nie'}
+                            Alle {frequency} Std.
+                            <span className="mt-1 block text-vault-500">
+                              Nächster Lauf: {nextRun ? formatRelativeTime(nextRun) : 'sofort fällig'}
+                            </span>
                             {latest?.scrape_ok === false && <span className="mt-1 block text-red-700">Fehlgeschlagen</span>}
                           </td>
                           <td className="px-4 py-4 text-xs">

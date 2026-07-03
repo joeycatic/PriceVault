@@ -7,6 +7,7 @@ from arq import Retry
 from db import queries
 from db.client import supabase_context
 from payments import viva
+from payments.invoices import create_paid_invoice
 from webhooks.viva_handler import next_month
 
 
@@ -71,7 +72,9 @@ async def renew_viva_subscription(
             if retry_at
             else None
         )
-        if attempt >= 3:
+        tenant = None
+        final_attempt = attempt >= 3
+        if final_attempt:
             with supabase_context(admin=True):
                 await queries.update_tenant(
                     tenant_id,
@@ -82,20 +85,45 @@ async def renew_viva_subscription(
                         "next_payment_retry_at": None,
                     },
                 )
-            raise
-        with supabase_context(admin=True):
-            await queries.update_tenant(
-                tenant_id,
-                {
-                    "failed_payment_count": attempt,
-                    "last_payment_error": str(exc)[:1000],
-                    "next_payment_retry_at": retry_iso,
-                },
+        else:
+            with supabase_context(admin=True):
+                await queries.update_tenant(
+                    tenant_id,
+                    {
+                        "failed_payment_count": attempt,
+                        "last_payment_error": str(exc)[:1000],
+                        "next_payment_retry_at": retry_iso,
+                    },
+                )
+        if ctx.get("redis"):
+            with supabase_context(admin=True):
+                tenant = await queries.get_tenant_by_id(tenant_id)
+            email = (tenant or {}).get("invoice_email")
+        else:
+            email = None
+        if email:
+            await ctx["redis"].enqueue_job(
+                "send_email",
+                tenant_id=tenant_id,
+                to=email,
+                template="payment_failed",
+                _job_id=f"dunning-{tenant_id}-{period}-{attempt}",
             )
+        if final_attempt:
+            raise
         raise Retry(defer=60 * (5 ** (attempt - 1))) from exc
 
     now = datetime.now(timezone.utc)
     with supabase_context(admin=True):
+        tenant = await queries.get_tenant_by_id(tenant_id)
+        if not tenant:
+            return {"status": "missing"}
+        await create_paid_invoice(
+            tenant=tenant,
+            plan=plan,
+            transaction_id=transaction_id,
+            paid_at=now.isoformat(),
+        )
         await queries.update_tenant(
             tenant_id,
             {

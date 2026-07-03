@@ -1,14 +1,39 @@
-"""Viva Smart Checkout subscription endpoints."""
+"""Viva Smart Checkout subscription and invoice endpoints."""
+
+import io
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from auth.plan_guard import require_owner
 from db import queries
 from models.schemas import BillingCheckoutRequest
 from payments import viva
+from payments.invoices import render_invoice_pdf
 
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+@router.get("/invoices")
+async def list_invoices(tenant: dict = Depends(require_owner)) -> list[dict]:
+    return await queries.list_billing_invoices(tenant["id"])
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+async def invoice_pdf(
+    invoice_id: str, tenant: dict = Depends(require_owner)
+) -> StreamingResponse:
+    invoice = await queries.get_billing_invoice(tenant["id"], invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Rechnung nicht gefunden")
+    return StreamingResponse(
+        io.BytesIO(render_invoice_pdf(invoice)),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{invoice["invoice_number"]}.pdf"'
+        },
+    )
 
 
 @router.post("/checkout")
