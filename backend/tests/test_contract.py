@@ -3045,6 +3045,158 @@ def test_viva_webhook_rejects_unverified_amount(monkeypatch):
         raise AssertionError("mismatched amount should fail")
 
 
+def test_viva_refund_webhook_records_adjustments_and_marks_request(monkeypatch):
+    from db import queries
+    from webhooks import viva_handler
+
+    class FakeRequest:
+        async def json(self):
+            return {
+                "EventTypeId": 1797,
+                "EventData": {
+                    "TransactionId": "refund-tx",
+                    "ParentId": "original-tx",
+                    "OrderCode": 1234,
+                    "StatusId": "F",
+                    "Amount": 12.34,
+                },
+            }
+
+    async def fake_refund(_transaction_id):
+        return {
+            "id": "refund-1",
+            "tenant_reference": "tenant-1",
+            "invoice_id": "invoice-1",
+            "amount_cents": 1234,
+            "reason": "Doppelte Zahlung",
+            "status": "processing",
+            "provider_response": {"created": True},
+            "billing_invoices": {"transaction_id": "original-tx"},
+        }
+
+    adjustments = []
+    updates = []
+
+    async def fake_order_for_invoice(_invoice_id):
+        return {"order_code": 1234}
+
+    async def fake_adjustment(payload):
+        adjustments.append(payload)
+        return payload
+
+    async def fake_refundable(_tenant_id, _invoice_id):
+        return 0
+
+    async def fake_invoice_state(tenant_id, invoice_id, state):
+        updates.append(("invoice", tenant_id, invoice_id, state))
+        return {}
+
+    async def fake_refund_update(request_id, values):
+        updates.append(("refund", request_id, values))
+        return values
+
+    monkeypatch.setattr(queries, "get_billing_refund_request_by_provider_transaction", fake_refund)
+    monkeypatch.setattr(queries, "get_billing_order_for_invoice", fake_order_for_invoice)
+    monkeypatch.setattr(queries, "create_billing_adjustment", fake_adjustment)
+    monkeypatch.setattr(queries, "refundable_amount_cents", fake_refundable)
+    monkeypatch.setattr(queries, "update_billing_invoice_state", fake_invoice_state)
+    monkeypatch.setattr(queries, "update_billing_refund_request", fake_refund_update)
+
+    assert asyncio.run(viva_handler.handle_viva_webhook(FakeRequest())) == {"ok": True}
+    assert [item["type"] for item in adjustments] == ["refund", "credit_note"]
+    assert updates[0] == ("invoice", "tenant-1", "invoice-1", "refunded")
+    assert updates[1][0:2] == ("refund", "refund-1")
+    assert updates[1][2]["status"] == "succeeded"
+
+
+def test_viva_refund_webhook_ignores_unknown_or_completed_refund(monkeypatch):
+    from db import queries
+    from webhooks import viva_handler
+
+    class FakeRequest:
+        async def json(self):
+            return {"EventTypeId": 1797, "EventData": {"TransactionId": "refund-tx", "OrderCode": 1234}}
+
+    async def no_refund(_transaction_id):
+        return None
+
+    monkeypatch.setattr(queries, "get_billing_refund_request_by_provider_transaction", no_refund)
+    assert asyncio.run(viva_handler.handle_viva_webhook(FakeRequest())) == {"ok": True}
+
+
+def test_viva_refund_webhook_rejects_mismatched_refund(monkeypatch):
+    from db import queries
+    from webhooks import viva_handler
+
+    class FakeRequest:
+        async def json(self):
+            return {
+                "EventTypeId": 1797,
+                "EventData": {
+                    "TransactionId": "refund-tx",
+                    "ParentId": "wrong-parent",
+                    "OrderCode": 1234,
+                    "StatusId": "F",
+                    "Amount": 12.34,
+                },
+            }
+
+    async def fake_refund(_transaction_id):
+        return {
+            "id": "refund-1",
+            "tenant_reference": "tenant-1",
+            "invoice_id": "invoice-1",
+            "amount_cents": 1234,
+            "reason": "Doppelte Zahlung",
+            "status": "processing",
+            "billing_invoices": {"transaction_id": "original-tx"},
+        }
+
+    async def fake_order_for_invoice(_invoice_id):
+        return {"order_code": 1234}
+
+    monkeypatch.setattr(queries, "get_billing_refund_request_by_provider_transaction", fake_refund)
+    monkeypatch.setattr(queries, "get_billing_order_for_invoice", fake_order_for_invoice)
+
+    try:
+        asyncio.run(viva_handler.handle_viva_webhook(FakeRequest()))
+    except Exception as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "Viva-Erstattung konnte nicht bestätigt werden"
+    else:
+        raise AssertionError("mismatched refund webhook should fail")
+
+
+def test_viva_webhook_rejects_missing_tenant(monkeypatch):
+    from db import queries
+    from webhooks import viva_handler
+
+    class FakeRequest:
+        async def json(self):
+            return {"EventTypeId": 1796, "EventData": {"TransactionId": "tx", "OrderCode": 7}}
+
+    async def fake_get_order(_code):
+        return {"tenant_id": "tenant-1", "order_code": 7, "plan": "pro", "amount_cents": 2900, "status": "pending"}
+
+    async def fake_retrieve(_transaction_id):
+        return {"orderCode": 7, "statusId": "F", "amount": 29.0}
+
+    async def missing_tenant(_tenant_id):
+        return None
+
+    monkeypatch.setattr(queries, "get_billing_order", fake_get_order)
+    monkeypatch.setattr(queries, "get_tenant_by_id", missing_tenant)
+    monkeypatch.setattr(viva_handler.viva, "retrieve_transaction", fake_retrieve)
+
+    try:
+        asyncio.run(viva_handler.handle_viva_webhook(FakeRequest()))
+    except Exception as exc:
+        assert exc.status_code == 404
+        assert exc.detail == "Mandant nicht gefunden"
+    else:
+        raise AssertionError("missing tenant should fail")
+
+
 def test_viva_webhook_key_proxies_provider_key(monkeypatch):
     from webhooks import viva_handler
 
@@ -3389,6 +3541,249 @@ def test_scrape_target_retry_requires_an_additional_quota_slot(monkeypatch):
     )
 
     assert result == {"scrape_ok": False, "error": "Tageslimit für Preisabrufe erreicht"}
+
+
+def test_source_policy_refresh_records_audit(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from db import queries
+    from jobs import scrape_tasks
+
+    async def no_policy(_tenant_id, _mapping_id):
+        return None
+
+    async def fake_evaluate(_url):
+        return SimpleNamespace(
+            robots_result="allowed",
+            checked_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            crawl_delay_seconds=3,
+            approved_host="shop.example",
+            block_reason=None,
+        )
+
+    audits = []
+
+    async def fake_upsert(tenant_id, mapping_id, values):
+        assert (tenant_id, mapping_id) == ("tenant-1", "mapping-1")
+        return {**values, "operator_override": None, "customer_authorized_at": "2026-07-05T00:00:00+00:00"}
+
+    async def fake_audit(values):
+        audits.append(values)
+        return values
+
+    monkeypatch.setattr(queries, "get_source_policy", no_policy)
+    monkeypatch.setattr(queries, "upsert_source_policy", fake_upsert)
+    monkeypatch.setattr(queries, "insert_audit_event", fake_audit)
+    monkeypatch.setattr(scrape_tasks, "evaluate_source_policy", fake_evaluate)
+
+    allowed, policy = asyncio.run(
+        scrape_tasks._ensure_source_policy(
+            "tenant-1",
+            {"competitor_product_id": "mapping-1", "url": "https://shop.example/p"},
+        )
+    )
+
+    assert allowed is True
+    assert policy["crawl_delay_seconds"] == 3
+    assert audits[0]["action"] == "source_policy.checked"
+
+
+def test_acquire_domain_slot_enforces_rate_and_lock():
+    from arq import Retry
+    from jobs import scrape_tasks
+
+    class FakeRedis:
+        def __init__(self, *, count=1, acquired=True):
+            self.count = count
+            self.acquired = acquired
+            self.calls = []
+
+        async def incr(self, key):
+            self.calls.append(("incr", key))
+            return self.count
+
+        async def expire(self, key, ttl):
+            self.calls.append(("expire", key, ttl))
+
+        async def set(self, key, value, **kwargs):
+            self.calls.append(("set", key, value, kwargs))
+            return self.acquired
+
+    allowed = FakeRedis()
+    lock_key = asyncio.run(scrape_tasks._acquire_domain_slot(allowed, "shop.example", 20))
+    assert lock_key == "pricevault:domain-lock:shop.example"
+    assert any(call[0] == "expire" for call in allowed.calls)
+
+    for redis, defer in ((FakeRedis(count=21), 60), (FakeRedis(acquired=False), 5)):
+        try:
+            asyncio.run(scrape_tasks._acquire_domain_slot(redis, "shop.example", 20))
+        except Retry as exc:
+            assert exc.defer_score == defer * 1000
+        else:
+            raise AssertionError("domain slot contention should retry")
+
+
+def test_scrape_target_blocks_disallowed_source(monkeypatch):
+    from db import queries
+    from jobs import scrape_tasks
+
+    async def fake_targets(_tenant_id, _ids=None):
+        return [{"competitor_product_id": "mapping-1", "url": "https://shop.example/p", "tenant_id": "tenant-1"}]
+
+    async def blocked_policy(_tenant_id, _mapping_id):
+        return {
+            "robots_result": "disallowed",
+            "robots_checked_at": "2099-07-05T00:00:00+00:00",
+            "approved_host": "shop.example",
+            "block_reason": "robots.txt untersagt den Abruf",
+        }
+
+    updates = []
+
+    async def fake_update(tenant_id, mapping_id, values):
+        updates.append((tenant_id, mapping_id, values))
+        return values
+
+    class UnexpectedScraper:
+        async def scrape(self, _target):
+            raise AssertionError("blocked source must not scrape")
+
+    monkeypatch.setattr(queries, "get_scrape_targets", fake_targets)
+    monkeypatch.setattr(queries, "get_source_policy", blocked_policy)
+    monkeypatch.setattr(queries, "update_product_mapping", fake_update)
+    monkeypatch.setattr(scrape_tasks, "ScraperAgent", UnexpectedScraper)
+
+    result = asyncio.run(scrape_tasks.scrape_target({}, competitor_product_id="mapping-1", tenant_id="tenant-1"))
+
+    assert result == {"scrape_ok": False, "blocked": True, "error": "robots.txt untersagt den Abruf"}
+    assert updates[0][2]["health_status"] == "blocked"
+
+
+def test_scrape_target_degrades_ambiguous_evidence(monkeypatch):
+    from datetime import datetime, timezone
+
+    from agents.scraper_agent import ScrapeResult
+    from db import queries
+    from jobs import scrape_tasks
+
+    async def fake_targets(_tenant_id, _ids=None):
+        return [{"competitor_product_id": "mapping-1", "url": "https://shop.example/p", "tenant_id": "tenant-1"}]
+
+    async def allowed_policy(_tenant_id, _mapping_id):
+        return {
+            "robots_result": "allowed",
+            "robots_checked_at": "2099-07-05T00:00:00+00:00",
+            "approved_host": "shop.example",
+            "domain_requests_per_minute": 20,
+        }
+
+    updates = []
+
+    async def fake_update(tenant_id, mapping_id, values):
+        updates.append((tenant_id, mapping_id, values))
+        return values
+
+    class FakeScraper:
+        async def scrape(self, _target):
+            return ScrapeResult(
+                competitor_product_id="mapping-1",
+                price=9.99,
+                currency=None,
+                in_stock=True,
+                raw_price_text="9,99",
+                scrape_ok=True,
+                error_msg=None,
+                scraped_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+                validation_state="ambiguous",
+                validation_reason="Währung fehlt",
+            )
+
+    monkeypatch.setattr(queries, "get_scrape_targets", fake_targets)
+    monkeypatch.setattr(queries, "get_source_policy", allowed_policy)
+    monkeypatch.setattr(queries, "update_product_mapping", fake_update)
+    monkeypatch.setattr(scrape_tasks, "ScraperAgent", FakeScraper)
+
+    result = asyncio.run(scrape_tasks.scrape_target({}, competitor_product_id="mapping-1", tenant_id="tenant-1"))
+
+    assert result["validation_state"] == "ambiguous"
+    assert updates[0][2] == {"health_status": "degraded", "last_failure_reason": "Währung fehlt"}
+
+
+def test_scrape_target_enqueues_followups_and_releases_domain_lock(monkeypatch):
+    from datetime import datetime, timezone
+
+    from agents.scraper_agent import ScrapeResult
+    from db import queries
+    from jobs import scrape_tasks
+
+    async def fake_targets(_tenant_id, _ids=None):
+        return [{"competitor_product_id": "mapping-1", "url": "https://shop.example/p", "tenant_id": "tenant-1"}]
+
+    async def allowed_policy(_tenant_id, _mapping_id):
+        return {
+            "robots_result": "allowed",
+            "robots_checked_at": "2099-07-05T00:00:00+00:00",
+            "approved_host": "shop.example",
+            "domain_requests_per_minute": 20,
+        }
+
+    class FakeRedis:
+        def __init__(self):
+            self.jobs = []
+            self.deleted = []
+
+        async def incr(self, _key):
+            return 1
+
+        async def expire(self, _key, _ttl):
+            return None
+
+        async def set(self, _key, _value, **_kwargs):
+            return True
+
+        async def delete(self, key):
+            self.deleted.append(key)
+
+        async def enqueue_job(self, *args, **kwargs):
+            self.jobs.append((args, kwargs))
+
+    class FakeScraper:
+        async def scrape(self, _target):
+            return ScrapeResult(
+                competitor_product_id="mapping-1",
+                price=9.99,
+                currency="EUR",
+                in_stock=True,
+                raw_price_text="9,99 EUR",
+                scrape_ok=True,
+                error_msg=None,
+                scraped_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+                validation_state="valid",
+            )
+
+    class FakeAlertAgent:
+        async def run(self, _tenant_id):
+            return {"checked": 1}
+
+    redis = FakeRedis()
+    monkeypatch.setattr(queries, "get_scrape_targets", fake_targets)
+    monkeypatch.setattr(queries, "get_source_policy", allowed_policy)
+    monkeypatch.setattr(scrape_tasks, "ScraperAgent", FakeScraper)
+    monkeypatch.setattr(scrape_tasks, "AlertAgent", FakeAlertAgent)
+
+    result = asyncio.run(
+        scrape_tasks.scrape_target(
+            {"redis": redis, "job_try": 1},
+            competitor_product_id="mapping-1",
+            tenant_id="tenant-1",
+            quota_reserved=True,
+        )
+    )
+
+    assert result["scrape_ok"] is True
+    assert redis.deleted == ["pricevault:domain-lock:shop.example"]
+    assert [job[0][0] for job in redis.jobs] == ["generate_product_insight", "generate_reprice_suggestions"]
 
 
 def test_scrape_product_fans_out_active_mappings_and_runs_alerts(monkeypatch):
