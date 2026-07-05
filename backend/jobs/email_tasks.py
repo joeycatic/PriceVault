@@ -6,6 +6,8 @@ import os
 
 import resend
 
+from db import queries
+from db.client import supabase_context
 from emails.settings import app_url, resend_sender
 
 
@@ -13,7 +15,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "emails" / "templates"
 
 
 async def send_email(ctx: dict, *, tenant_id: str, to: str, template: str) -> dict[str, str]:
-    del ctx, tenant_id
+    del ctx
     api_key = os.environ["RESEND_API_KEY"]
     resend.api_key = api_key
     template_path = TEMPLATE_DIR / f"{template}.html"
@@ -33,4 +35,6 @@ async def send_email(ctx: dict, *, tenant_id: str, to: str, template: str) -> di
             "html": html,
         },
     )
+    with supabase_context(admin=True):
+        await queries.insert_usage_event(tenant_id, "emails")
     return {"sent": to}

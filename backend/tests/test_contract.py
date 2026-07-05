@@ -88,6 +88,7 @@ def test_openapi_contains_phase_routes():
         "/privacy/requests",
         "/scrape/sources/{mapping_id}/repair",
         "/integrations/prices/latest",
+        "/products/discover",
     ):
         assert path in paths
 
@@ -758,6 +759,100 @@ def test_repricing_calculation_never_crosses_margin_floor():
 
     assert (matched, matched_floor) == (100.0, 100.0)
     assert (beaten, beaten_floor) == (114.0, 100.0)
+
+
+def test_public_catalog_parses_shopify_and_product_json_ld():
+    from scrapers.public_catalog import parse_product_page, parse_shopify_catalog
+
+    shopify = parse_shopify_catalog(
+        {
+            "products": [
+                {
+                    "title": "Grow Lampe",
+                    "handle": "grow-lampe",
+                    "variants": [{"price": "199.90", "sku": "GL-1", "barcode": "1234567890123"}],
+                }
+            ]
+        },
+        "https://shop.example",
+        10,
+    )
+    json_ld = parse_product_page(
+        '''<script type="application/ld+json">{
+          "@type":"Product","name":"Lüfter","sku":"LF-2",
+          "offers":{"@type":"Offer","price":"89.50","priceCurrency":"EUR"}
+        }</script>''',
+        "https://shop.example/produkt/luefter",
+    )
+
+    assert shopify == [{
+        "name": "Grow Lampe",
+        "url": "https://shop.example/products/grow-lampe",
+        "sku": "GL-1",
+        "gtin": "1234567890123",
+        "price": 199.9,
+        "currency": "EUR",
+        "source": "shopify",
+    }]
+    assert json_ld["name"] == "Lüfter"
+    assert json_ld["price"] == 89.5
+    assert json_ld["sku"] == "LF-2"
+
+
+def test_public_catalog_rejects_private_destinations():
+    from scrapers.public_catalog import validate_public_shop_url
+
+    assert validate_public_shop_url("shop.example") == "https://shop.example"
+    for value in ("http://127.0.0.1", "http://localhost:8000", "http://10.0.0.2"):
+        try:
+            validate_public_shop_url(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"private catalog URL accepted: {value}")
+
+
+def test_matcher_ranks_product_title_above_navigation_links():
+    from agents.matcher_agent import MatcherAgent, MatchRequest
+
+    request = MatchRequest("Rezin 1 Liter", "competitor-1", "https://shop.example")
+    candidates = MatcherAgent()._rank(
+        request,
+        [
+            ("https://shop.example/heizer", "Heizer"),
+            ("https://shop.example/Green-Planet-Rizen-1-Liter", "Green Planet Rezin 1 Liter"),
+            ("https://shop.example/registrieren", "Jetzt registrieren!"),
+        ],
+    )
+
+    assert candidates[0].title == "Green Planet Rezin 1 Liter"
+    assert candidates[0].confidence > candidates[1].confidence
+
+
+def test_automatic_repricing_guards_large_changes_and_source_health():
+    from agents.repricing_agent import automatic_apply_blocker
+
+    assert automatic_apply_blocker(
+        current_price=100,
+        suggested_price=95,
+        max_change_pct=10,
+        sources_healthy=True,
+        require_healthy_sources=True,
+    ) is None
+    assert "überschreitet" in automatic_apply_blocker(
+        current_price=100,
+        suggested_price=75,
+        max_change_pct=10,
+        sources_healthy=True,
+        require_healthy_sources=True,
+    )
+    assert "degradiert" in automatic_apply_blocker(
+        current_price=100,
+        suggested_price=95,
+        max_change_pct=10,
+        sources_healthy=False,
+        require_healthy_sources=True,
+    )
 
 
 def test_product_insight_material_change_threshold():

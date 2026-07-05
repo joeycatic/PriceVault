@@ -8,12 +8,15 @@ from db import queries
 from models.schemas import (
     ProductCreate,
     ProductMappingCreate,
+    PublicCatalogDiscoverRequest,
     ProductUpdate,
     ProductVariantCreate,
     ProductVariantUpdate,
 )
 from routers import get_tenant
 from routers.audit import record_audit_event
+from scrapers.public_catalog import discover_public_catalog
+from scrapers.policy import evaluate_source_policy
 
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -22,6 +25,26 @@ router = APIRouter(prefix="/products", tags=["products"])
 @router.get("")
 async def list_all(tenant_id: str = Depends(get_tenant)) -> list[dict]:
     return await queries.list_products(tenant_id)
+
+
+@router.post("/discover")
+async def discover_catalog(
+    body: PublicCatalogDiscoverRequest,
+    tenant: dict = Depends(require_tenant_admin_from_header),
+) -> dict:
+    try:
+        products = await discover_public_catalog(body.base_url, body.max_products)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Der Shop-Katalog konnte nicht gelesen werden") from exc
+    await record_audit_event(
+        tenant,
+        action="product_catalog.discovered",
+        resource_type="shop_catalog",
+        metadata={"base_url": body.base_url, "max_products": body.max_products, "found": len(products)},
+    )
+    return {"products": products, "found": len(products)}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -145,8 +168,27 @@ async def create_mapping(
     variant = await queries.get_product_variant(tenant_id, body.variant_id)
     if not variant or variant["product_id"] != product_id:
         raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    if not body.customer_authorized:
+        raise HTTPException(status_code=400, detail="Die Berechtigung zum Abruf der Preisquelle muss bestätigt werden")
+    decision = await evaluate_source_policy(str(body.competitor_url))
+    if not decision.allowed:
+        raise HTTPException(status_code=400, detail=decision.block_reason or "Die Preisquelle darf laut robots.txt nicht abgerufen werden")
+    values = body.model_dump(mode="json", exclude={"customer_authorized"})
     mapping = await queries.create_product_mapping(
-        tenant_id, product_id, body.model_dump(mode="json")
+        tenant_id, product_id, values
+    )
+    await queries.upsert_source_policy(
+        tenant_id,
+        mapping["id"],
+        {
+            "robots_result": decision.robots_result,
+            "robots_checked_at": decision.checked_at.isoformat(),
+            "crawl_delay_seconds": decision.crawl_delay_seconds,
+            "approved_host": decision.approved_host,
+            "block_reason": decision.block_reason,
+            "customer_authorized_at": decision.checked_at.isoformat(),
+            "customer_authorized_by": tenant.get("_actor_user_id") or tenant.get("user_id"),
+        },
     )
     await record_audit_event(
         tenant,

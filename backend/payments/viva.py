@@ -88,8 +88,8 @@ async def access_token() -> str:
     return str(token)
 
 
-async def create_payment_order(*, tenant_id: str, email: str | None, plan: str) -> int:
-    amount = PLAN_AMOUNTS[plan]
+async def create_payment_order(*, tenant_id: str, email: str | None, plan: str, amount_cents: int | None = None) -> int:
+    amount = amount_cents if amount_cents is not None else PLAN_AMOUNTS[plan]
     token = await access_token()
     payload: dict[str, Any] = {
         "amount": amount,
@@ -163,3 +163,28 @@ async def create_recurring_payment(
     if not transaction_id:
         raise VivaAPIError("Viva API did not return a recurring transaction ID")
     return str(transaction_id)
+
+
+async def refund_transaction(
+    *, transaction_id: str, amount_cents: int, source_code: str,
+    merchant_reference: str, idempotency_key: str,
+) -> dict[str, Any]:
+    result = await _request(
+        "DELETE",
+        f"{_web_base()}/api/transactions/{transaction_id}",
+        timeout=30,
+        auth=(_required("VIVA_MERCHANT_ID"), _required("VIVA_API_KEY")),
+        params={
+            "amount": amount_cents,
+            "sourceCode": source_code,
+            "currencyCode": "978",
+            "merchantTrns": merchant_reference,
+            "customerTrns": "PriceVault Erstattung",
+            "idempotencyKey": idempotency_key,
+        },
+    )
+    if _value(result, "success") is False or _value(result, "errorCode") not in (None, 0):
+        raise VivaAPIError(str(_value(result, "errorText") or "Refund failed"))
+    if _value(result, "statusId") != "F" or not _value(result, "transactionId"):
+        raise VivaAPIError("Viva did not confirm the refund transaction")
+    return result

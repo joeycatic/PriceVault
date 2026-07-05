@@ -3,8 +3,10 @@
 from dataclasses import asdict
 from contextlib import suppress
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import structlog.contextvars
+from arq import Retry
 
 from agents.alert_agent import AlertAgent
 from agents.scraper_agent import ScrapeTarget, ScraperAgent
@@ -12,6 +14,7 @@ from auth.scrape_quota import release_scrape_slots, reserve_scrape_slots
 from db import queries
 from db.client import supabase_context
 from jobs.retry import maybe_retry_or_dlq
+from scrapers.policy import evaluate_source_policy, policy_check_due
 from utils.logger import get_logger
 
 
@@ -26,7 +29,62 @@ def _target_from_row(row: dict) -> ScrapeTarget:
         selector_stock=row.get("selector_stock"),
         tenant_id=row["tenant_id"],
         competitor_id=row.get("competitor_id"),
+        expected_currency=row.get("expected_currency"),
+        expected_variant=row.get("expected_variant"),
+        source_validation_state=row.get("source_validation_state", "unvalidated"),
+        approved_host=row.get("approved_host"),
     )
+
+
+async def _ensure_source_policy(tenant_id: str, row: dict) -> tuple[bool, dict]:
+    policy = await queries.get_source_policy(tenant_id, row["competitor_product_id"])
+    if policy_check_due(policy):
+        decision = await evaluate_source_policy(row["url"])
+        policy = await queries.upsert_source_policy(
+            tenant_id,
+            row["competitor_product_id"],
+            {
+                "robots_result": decision.robots_result,
+                "robots_checked_at": decision.checked_at.isoformat(),
+                "crawl_delay_seconds": decision.crawl_delay_seconds,
+                "approved_host": decision.approved_host,
+                "block_reason": decision.block_reason,
+            },
+        )
+        await queries.insert_audit_event(
+            {
+                "tenant_id": tenant_id,
+                "action": "source_policy.checked",
+                "resource_type": "competitor_product",
+                "resource_id": row["competitor_product_id"],
+                "metadata": {
+                    "robots_result": decision.robots_result,
+                    "approved_host": decision.approved_host,
+                },
+            }
+        )
+    override = policy.get("operator_override")
+    customer_authorized = bool(policy.get("customer_authorized_at"))
+    allowed = override != "block" and (
+        policy.get("robots_result") == "allowed"
+        or (override == "allow" and customer_authorized)
+    )
+    return allowed, policy
+
+
+async def _acquire_domain_slot(redis, host: str, requests_per_minute: int) -> str:
+    minute = int(datetime.now(timezone.utc).timestamp() // 60)
+    rate_key = f"pricevault:domain-rate:{host}:{minute}"
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 120)
+    if count > requests_per_minute:
+        raise Retry(defer=60)
+    lock_key = f"pricevault:domain-lock:{host}"
+    acquired = await redis.set(lock_key, "1", px=120_000, nx=True)
+    if not acquired:
+        raise Retry(defer=5)
+    return lock_key
 
 
 async def scrape_target(
@@ -63,6 +121,8 @@ async def _scrape_target(
     evaluate_alerts: bool,
     quota_reserved: bool,
 ) -> dict[str, object]:
+    with suppress(Exception):
+        await queries.insert_usage_event(tenant_id, "queue_jobs")
     scrape_job = None
     with suppress(Exception):
         scrape_job = await queries.start_scrape_job(tenant_id, competitor_product_id)
@@ -94,6 +154,19 @@ async def _scrape_target(
                 )
         return {"scrape_ok": False, "error": error}
 
+    allowed, policy = await _ensure_source_policy(tenant_id, rows[0])
+    rows[0]["approved_host"] = policy["approved_host"]
+    if not allowed:
+        error = policy.get("block_reason") or "Preisquelle ist durch die Abrufrichtlinie blockiert"
+        await queries.update_product_mapping(
+            tenant_id,
+            competitor_product_id,
+            {"health_status": "blocked", "last_failure_reason": error, "broken_reason": error},
+        )
+        if scrape_job:
+            await queries.finish_scrape_job(scrape_job["id"], {"state": "failed", "failure_reason": error})
+        return {"scrape_ok": False, "blocked": True, "error": error}
+
     attempt = int(ctx.get("job_try") or 1)
     if not quota_reserved or attempt > 1:
         redis = ctx.get("redis")
@@ -120,7 +193,18 @@ async def _scrape_target(
                     "error": "Tageslimit für Preisabrufe erreicht",
                 }
 
-    result = await ScraperAgent().scrape(_target_from_row(rows[0]))
+    domain_lock = None
+    redis = ctx.get("redis")
+    if redis:
+        host = (urlparse(rows[0]["url"]).hostname or "unknown").lower()
+        domain_lock = await _acquire_domain_slot(
+            redis, host, int(policy.get("domain_requests_per_minute") or 20)
+        )
+    try:
+        result = await ScraperAgent().scrape(_target_from_row(rows[0]))
+    finally:
+        if redis and domain_lock:
+            await redis.delete(domain_lock)
     if not result.scrape_ok:
         with suppress(Exception):
             await queries.mark_source_scrape_failure(
@@ -147,6 +231,26 @@ async def _scrape_target(
             competitor_product_id=competitor_product_id,
             error=result.error_msg or "Preisabruf fehlgeschlagen",
         )
+    elif result.validation_state != "valid":
+        with suppress(Exception):
+            await queries.update_product_mapping(
+                tenant_id,
+                competitor_product_id,
+                {
+                    "health_status": "degraded",
+                    "last_failure_reason": result.validation_reason,
+                },
+            )
+        if scrape_job:
+            with suppress(Exception):
+                await queries.finish_scrape_job(
+                    scrape_job["id"],
+                    {
+                        "state": "succeeded",
+                        "failure_reason": result.validation_reason,
+                        "last_successful_price": None,
+                    },
+                )
     elif evaluate_alerts:
         with suppress(Exception):
             await queries.mark_source_scrape_success(
@@ -164,12 +268,21 @@ async def _scrape_target(
                     },
                 )
         await AlertAgent().run(tenant_id)
+        with suppress(Exception):
+            tenant = await queries.get_tenant_by_id(tenant_id)
+            await queries.record_product_event(tenant_id, "first_validated_scrape", (tenant or {}).get("plan"))
         if ctx.get("redis"):
             await ctx["redis"].enqueue_job(
                 "generate_product_insight",
                 tenant_id=tenant_id,
                 competitor_product_id=competitor_product_id,
                 _job_id=f"insight-{competitor_product_id}-{int(result.scraped_at.timestamp())}",
+            )
+            minute_bucket = int(result.scraped_at.timestamp() // 60)
+            await ctx["redis"].enqueue_job(
+                "generate_reprice_suggestions",
+                tenant_id=tenant_id,
+                _job_id=f"repricing-{tenant_id}-{minute_bucket}",
             )
     elif scrape_job:
         with suppress(Exception):

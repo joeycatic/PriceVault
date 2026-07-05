@@ -1,7 +1,6 @@
 """Shared Browserless Playwright browser settings."""
 
 import os
-import random
 
 BROWSERLESS_HOST = os.environ.get(
     "BROWSERLESS_HOST", "wss://production-sfo.browserless.io"
@@ -29,4 +28,5 @@ def browserless_ws_url() -> str:
 
 
 def random_user_agent() -> str:
-    return random.choice(USER_AGENTS)
+    contact = os.getenv("SCRAPER_CONTACT_URL", "https://pricevault.de/bot")
+    return os.getenv("SCRAPER_USER_AGENT", f"PriceVaultBot/1.0 (+{contact})")

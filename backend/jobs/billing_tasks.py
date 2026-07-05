@@ -1,6 +1,6 @@
 """Viva subscription renewal jobs."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from arq import Retry
 
@@ -9,6 +9,55 @@ from db.client import supabase_context
 from payments import viva
 from payments.invoices import create_paid_invoice
 from webhooks.viva_handler import next_month
+
+
+async def reconcile_viva_day(ctx: dict) -> dict[str, int | str]:
+    del ctx
+    today = datetime.now(timezone.utc).date()
+    target_date = today - timedelta(days=1)
+    since = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+    until = since + timedelta(days=1)
+    with supabase_context(admin=True):
+        orders = [
+            order
+            for order in await queries.list_paid_billing_orders_since(since.isoformat())
+            if order.get("paid_at") and datetime.fromisoformat(str(order["paid_at"]).replace("Z", "+00:00")) < until
+        ]
+        await queries.upsert_billing_reconciliation(
+            {"reconciliation_date": target_date.isoformat(), "status": "running"}
+        )
+    database_total = sum(int(order["amount_cents"]) for order in orders)
+    provider_total = 0
+    mismatches: list[str] = []
+    try:
+        for order in orders:
+            transaction_id = order.get("transaction_id")
+            if not transaction_id:
+                mismatches.append(str(order["id"]))
+                continue
+            transaction = await viva.retrieve_transaction(str(transaction_id))
+            amount = transaction.get("amount", transaction.get("Amount", 0))
+            status_id = transaction.get("statusId", transaction.get("StatusId"))
+            amount_cents = round(float(amount or 0) * 100)
+            provider_total += amount_cents
+            if status_id != "F" or amount_cents != int(order["amount_cents"]):
+                mismatches.append(str(order["id"]))
+        status_value = "matched" if not mismatches and provider_total == database_total else "mismatch"
+    except viva.VivaAPIError as exc:
+        status_value = "failed"
+        mismatches.append(type(exc).__name__)
+    with supabase_context(admin=True):
+        await queries.upsert_billing_reconciliation(
+            {
+                "reconciliation_date": target_date.isoformat(),
+                "status": status_value,
+                "provider_total_cents": provider_total,
+                "database_total_cents": database_total,
+                "evidence": {"order_count": len(orders), "mismatches": mismatches},
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    return {"status": status_value, "orders": len(orders)}
 
 
 async def enqueue_due_viva_renewals(ctx: dict) -> int:
@@ -55,10 +104,17 @@ async def renew_viva_subscription(
     period: str,
 ) -> dict[str, str]:
     idempotency_key = f"pricevault:{tenant_id}:{period}"
+    with supabase_context(admin=True):
+        billing_tenant = await queries.get_tenant_by_id(tenant_id)
+    amount_cents = (
+        viva.PLAN_NET_AMOUNTS[plan]
+        if billing_tenant and billing_tenant.get("tax_treatment") == "eu_reverse_charge"
+        else viva.PLAN_AMOUNTS[plan]
+    )
     try:
         transaction_id = await viva.create_recurring_payment(
             initial_transaction_id=initial_transaction_id,
-            amount_cents=viva.PLAN_AMOUNTS[plan],
+            amount_cents=amount_cents,
             source_code=source_code,
             idempotency_key=idempotency_key,
         )

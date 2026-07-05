@@ -15,6 +15,14 @@ from routers.audit import record_audit_event
 router = APIRouter(prefix="/repricing", tags=["repricing"])
 
 
+def _assert_automatic_plan(tenant: dict, approval_mode: str | None) -> None:
+    if approval_mode == "automatic" and tenant.get("plan") != "agency":
+        raise HTTPException(
+            status_code=403,
+            detail="Automatische Preisänderungen sind im Agency-Plan verfügbar",
+        )
+
+
 @router.get("/rules")
 async def list_rules(tenant_id: str = Depends(get_tenant)) -> list[dict]:
     return await queries.list_repricing_rules(tenant_id)
@@ -26,6 +34,7 @@ async def create_rule(
     tenant: dict = Depends(require_tenant_admin_from_header),
 ) -> dict:
     tenant_id = tenant["id"]
+    _assert_automatic_plan(tenant, body.approval_mode)
     if body.product_id and not await queries.get_product(tenant_id, body.product_id):
         raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
     if body.variant_id:
@@ -52,6 +61,7 @@ async def update_rule(
     tenant: dict = Depends(require_tenant_admin_from_header),
 ) -> dict:
     values = body.model_dump(exclude_unset=True, mode="json")
+    _assert_automatic_plan(tenant, body.approval_mode)
     if body.strategy == "match_lowest":
         values["beat_by_pct"] = 0
     rule = await queries.update_repricing_rule(tenant["id"], rule_id, values)
@@ -66,6 +76,30 @@ async def list_suggestions(
     tenant_id: str = Depends(get_tenant),
 ) -> list[dict]:
     return await queries.list_reprice_suggestions(tenant_id, suggestion_status)
+
+
+@router.get("/changes")
+async def list_changes(tenant: dict = Depends(require_tenant_admin_from_header)) -> list[dict]:
+    return await queries.list_repricing_changes(tenant["id"])
+
+
+@router.post("/changes/{change_id}/rollback")
+async def rollback_change(
+    change_id: str, tenant: dict = Depends(require_tenant_admin_from_header)
+) -> dict:
+    change = await queries.get_repricing_change(tenant["id"], change_id)
+    if not change:
+        raise HTTPException(status_code=404, detail="Preisänderung nicht gefunden")
+    if change.get("actor_type") == "automatic":
+        raise HTTPException(status_code=403, detail="Automatische Änderungen dürfen nur Platform-Operatoren zurücksetzen")
+    try:
+        result = await RepricingAgent().rollback(tenant["id"], change, actor_id=tenant.get("_actor_user_id"))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await record_audit_event(
+        tenant, action="repricing.change.rolled_back", resource_type="repricing_change", resource_id=change_id,
+    )
+    return result
 
 
 @router.post("/suggestions/generate")
@@ -87,7 +121,12 @@ async def approve_suggestion(
         raise HTTPException(status_code=409, detail="Preisvorschlag wurde bereits bearbeitet")
     reviewed_at = datetime.now(timezone.utc).isoformat()
     try:
-        writeback_status = await RepricingAgent().apply(tenant["id"], suggestion)
+        writeback_status = await RepricingAgent().apply(
+            tenant["id"],
+            suggestion,
+            actor_type="user",
+            actor_id=tenant.get("_actor_user_id") or tenant.get("user_id"),
+        )
     except Exception as exc:
         await queries.update_reprice_suggestion(
             tenant["id"],

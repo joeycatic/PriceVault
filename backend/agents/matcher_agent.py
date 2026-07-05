@@ -8,6 +8,7 @@ from playwright.async_api import Page, async_playwright
 from rapidfuzz.fuzz import token_sort_ratio
 
 from db import queries
+from scrapers.public_catalog import search_public_shop
 from utils.logger import get_logger
 from utils.stealth import close_stealth_page, get_stealth_page, navigate_stealth
 
@@ -53,39 +54,70 @@ class MatcherAgent:
         return links
 
     async def search(self, request: MatchRequest) -> list[MatchCandidate]:
-        page = None
-        links: list[tuple[str, str]] = []
+        query = request.gtin or request.product_name
         try:
-            async with async_playwright() as playwright:
-                page = await get_stealth_page(playwright)
-                internal_url = (
-                    request.competitor_base_url.rstrip("/")
-                    + "/search?q="
-                    + quote_plus(request.gtin or request.product_name)
-                )
-                try:
-                    await navigate_stealth(page, internal_url)
-                    links = await self._extract_links(page, request.competitor_base_url)
-                except Exception:
-                    links = []
+            links = await asyncio.wait_for(
+                search_public_shop(request.competitor_base_url, query),
+                timeout=35,
+            )
+        except Exception as exc:
+            logger.warning(
+                "public_match_search_failed",
+                action="public_match_search_failed",
+                competitor_id=request.competitor_id,
+                error_type=type(exc).__name__,
+            )
+            links = []
 
-                if not links:
-                    query = quote_plus(
-                        f"site:{request.competitor_base_url} {request.gtin or request.product_name}"
+        public_candidates = self._rank(request, links)
+        if public_candidates:
+            return public_candidates
+
+        page = None
+        browser_links: list[tuple[str, str]] = []
+        try:
+            async with asyncio.timeout(35):
+                async with async_playwright() as playwright:
+                    page = await get_stealth_page(playwright)
+                    internal_url = (
+                        request.competitor_base_url.rstrip("/")
+                        + "/search?q="
+                        + quote_plus(query)
                     )
-                    await navigate_stealth(page, f"https://www.google.com/search?q={query}")
-                    links = await self._extract_links(page, request.competitor_base_url)
+                    await navigate_stealth(page, internal_url)
+                    browser_links = await self._extract_links(page, request.competitor_base_url)
+        except Exception as exc:
+            logger.warning(
+                "browser_match_search_failed",
+                action="browser_match_search_failed",
+                competitor_id=request.competitor_id,
+                error_type=type(exc).__name__,
+            )
         finally:
             if page:
-                await close_stealth_page(page)
+                try:
+                    await close_stealth_page(page)
+                except Exception:
+                    pass
 
+        return self._rank(request, browser_links)
+
+    def _rank(
+        self, request: MatchRequest, links: list[tuple[str, str]]
+    ) -> list[MatchCandidate]:
         deduplicated: dict[str, str] = {}
         for url, title in links:
             deduplicated.setdefault(url, title)
         candidates = []
         for url, title in deduplicated.items():
             exact_gtin = bool(request.gtin and request.gtin in f"{url} {title}")
-            confidence = 1.0 if exact_gtin else token_sort_ratio(request.product_name, title) / 100
+            title_score = token_sort_ratio(request.product_name, title) / 100
+            path_score = token_sort_ratio(
+                request.product_name, urlparse(url).path.replace("-", " ")
+            ) / 100
+            confidence = 1.0 if exact_gtin else max(title_score, path_score)
+            if confidence < 0.35:
+                continue
             candidates.append(
                 MatchCandidate(url=url, title=title, confidence=round(confidence, 3))
             )

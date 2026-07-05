@@ -22,6 +22,7 @@ from models.schemas import (
     ProductMappingRepair,
     ScrapeRunRequest,
     ScrapeTestRequest,
+    SelectorDetectRequest,
 )
 from routers import get_tenant
 from routers.audit import record_audit_event
@@ -118,6 +119,18 @@ async def test_scrape(body: ScrapeTestRequest, tenant_id: str = Depends(get_tena
     payload.pop("currency")
     payload.pop("scraped_at")
     return payload
+
+
+@router.post("/scrape/detect-selector")
+async def detect_selector(body: SelectorDetectRequest, tenant_id: str = Depends(get_tenant)) -> dict:
+    try:
+        candidates = await ScraperAgent().detect_price_selectors(str(body.url), tenant_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Selektorerkennung fehlgeschlagen: {type(exc).__name__}",
+        ) from exc
+    return {"candidates": [asdict(candidate) for candidate in candidates]}
 
 
 @router.post("/scrape/sources/{mapping_id}/repair")

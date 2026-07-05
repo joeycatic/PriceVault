@@ -1,5 +1,7 @@
 """Tenant data export and deletion request endpoints."""
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from auth.dependencies import get_current_tenant
@@ -40,6 +42,7 @@ async def create_request(
         }
 
     status_value = "requested"
+    scheduled_for = None
     if body.request_type == "deletion":
         expected = f"DELETE {tenant['shop_name']}"
         if body.confirmation_text != expected:
@@ -47,7 +50,8 @@ async def create_request(
                 status_code=400,
                 detail=f"Bitte bestätige mit: {expected}",
             )
-        status_value = "confirmed"
+        status_value = "cooling_off"
+        scheduled_for = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
 
     request = await queries.create_privacy_request(
         tenant["id"],
@@ -55,6 +59,9 @@ async def create_request(
             "user_id": tenant.get("_actor_user_id"),
             "request_type": body.request_type,
             "status": status_value,
+            "confirmed_at": datetime.now(timezone.utc).isoformat() if body.request_type == "deletion" else None,
+            "scheduled_for": scheduled_for,
+            "receipt_email": tenant.get("_email") if body.request_type == "deletion" else None,
             "confirmation_text": body.confirmation_text,
             "export_metadata": metadata,
         },
@@ -67,3 +74,28 @@ async def create_request(
         metadata={"status": status_value},
     )
     return request
+
+
+@router.post("/requests/{request_id}/cancel")
+async def cancel_deletion_request(
+    request_id: str,
+    tenant: dict = Depends(get_current_tenant),
+) -> dict:
+    if tenant.get("_role", "owner") != "owner":
+        raise HTTPException(status_code=403, detail="Nur Owner dürfen Löschanfragen stornieren")
+    requests = await queries.list_privacy_requests(tenant["id"], 200)
+    current = next((item for item in requests if item["id"] == request_id), None)
+    if not current:
+        raise HTTPException(status_code=404, detail="Datenschutzanfrage nicht gefunden")
+    if current["request_type"] != "deletion" or current["status"] not in {"cooling_off", "scheduled"}:
+        raise HTTPException(status_code=409, detail="Diese Löschanfrage kann nicht mehr storniert werden")
+    updated = await queries.update_privacy_request(
+        tenant["id"], request_id, {"status": "canceled", "canceled_at": datetime.now(timezone.utc).isoformat()}
+    )
+    await record_audit_event(
+        tenant,
+        action="privacy.deletion.canceled",
+        resource_type="privacy_request",
+        resource_id=request_id,
+    )
+    return updated or current

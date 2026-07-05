@@ -6,12 +6,16 @@ from arq import create_pool
 from arq.connections import RedisSettings
 
 from jobs.alert_tasks import deliver_alert
-from jobs.billing_tasks import enqueue_due_viva_renewals, renew_viva_subscription
+from jobs.billing_tasks import enqueue_due_viva_renewals, reconcile_viva_day, renew_viva_subscription
+from jobs.capacity_tasks import evaluate_capacity
 from jobs.connector_tasks import sync_connector_run
+from jobs.cost_tasks import summarize_operational_costs
 from jobs.digest_tasks import enqueue_due_alert_digests, send_alert_digest
 from jobs.email_tasks import send_email
 from jobs.insight_tasks import generate_product_insight
+from jobs.privacy_tasks import execute_due_privacy_deletions
 from jobs.report_tasks import enqueue_due_reports, send_report_run
+from jobs.repricing_tasks import generate_reprice_suggestions
 from jobs.retry import send_to_dlq
 from jobs.scrape_tasks import scrape_all, scrape_product, scrape_target
 from logging_config import configure_logging
@@ -44,12 +48,17 @@ class WorkerSettings:
         deliver_alert,
         enqueue_due_viva_renewals,
         renew_viva_subscription,
+        reconcile_viva_day,
         enqueue_due_reports,
         send_report_run,
         sync_connector_run,
         enqueue_due_alert_digests,
         send_alert_digest,
         generate_product_insight,
+        generate_reprice_suggestions,
+        execute_due_privacy_deletions,
+        summarize_operational_costs,
+        evaluate_capacity,
     ]
     on_startup = startup
     on_shutdown = shutdown

@@ -31,16 +31,23 @@ async def scrape_price(url: str) -> float:
 
 
 async def extract_price(page: Page) -> float | None:
-    """Extract a price from an existing product page without opening another browser."""
-    price = await _extract_jsonld_price(page)
-    if price is None:
-        price = await _extract_meta_price(page)
-    if price is None:
-        price = await _extract_css_price(page)
-    return price
+    """Compatibility wrapper for callers that only need the numeric value."""
+    offer = await extract_offer(page)
+    return float(offer["price"]) if offer else None
 
 
-async def _extract_jsonld_price(page: Page) -> float | None:
+async def extract_offer(page: Page) -> dict[str, Any] | None:
+    """Extract bounded commercial offer evidence without inventing a currency."""
+    offer = await _extract_jsonld_offer(page)
+    if offer:
+        return offer
+    offer = await _extract_meta_offer(page)
+    if offer:
+        return offer
+    return await _extract_css_offer(page)
+
+
+async def _extract_jsonld_offer(page: Page) -> dict[str, Any] | None:
     try:
         data = await page.evaluate(
             """() => {
@@ -48,7 +55,14 @@ async def _extract_jsonld_price(page: Page) -> float | None:
             const readOffer = (offer) => {
               if (!offer) return null;
               const item = Array.isArray(offer) ? offer[0] : offer;
-              return item?.price ?? item?.lowPrice ?? null;
+              const price = item?.price ?? item?.lowPrice ?? null;
+              if (price == null) return null;
+              return {
+                price,
+                currency: item?.priceCurrency ?? null,
+                availability: item?.availability ?? null,
+                raw: JSON.stringify({price, priceCurrency: item?.priceCurrency ?? null, availability: item?.availability ?? null}).slice(0, 500)
+              };
             };
             for (const script of scripts) {
               try {
@@ -69,10 +83,24 @@ async def _extract_jsonld_price(page: Page) -> float | None:
         )
     except Exception:
         return None
-    return _coerce_price(data)
+    if not isinstance(data, dict):
+        return None
+    price = _coerce_price(data.get("price"))
+    if price is None:
+        return None
+    currency = _normalize_currency(data.get("currency"))
+    availability = str(data.get("availability") or "").casefold()
+    return {
+        "price": price,
+        "currency": currency,
+        "in_stock": None if not availability else not any(term in availability for term in ("outofstock", "soldout", "discontinued")),
+        "method": "json_ld",
+        "confidence": 0.98 if currency else 0.78,
+        "evidence": {"offer": str(data.get("raw") or "")[:500]},
+    }
 
 
-async def _extract_meta_price(page: Page) -> float | None:
+async def _extract_meta_offer(page: Page) -> dict[str, Any] | None:
     selectors = (
         'meta[property="product:price:amount"]',
         'meta[property="og:price:amount"]',
@@ -85,11 +113,23 @@ async def _extract_meta_price(page: Page) -> float | None:
             continue
         price = _coerce_price(content)
         if price is not None:
-            return price
+            currency = None
+            for currency_selector in ('meta[property="product:price:currency"]', 'meta[property="og:price:currency"]'):
+                currency = _normalize_currency(await page.get_attribute(currency_selector, "content"))
+                if currency:
+                    break
+            return {
+                "price": price,
+                "currency": currency,
+                "in_stock": None,
+                "method": "metadata",
+                "confidence": 0.94 if currency else 0.76,
+                "evidence": {"selector": selector, "value": str(content)[:160]},
+            }
     return None
 
 
-async def _extract_css_price(page: Page) -> float | None:
+async def _extract_css_offer(page: Page) -> dict[str, Any] | None:
     selectors = (
         ".price--main",
         ".product-price",
@@ -105,7 +145,15 @@ async def _extract_css_price(page: Page) -> float | None:
             continue
         price = _coerce_price(text)
         if price is not None:
-            return price
+            currency = _currency_from_text(text)
+            return {
+                "price": price,
+                "currency": currency,
+                "in_stock": None,
+                "method": "known_selector",
+                "confidence": 0.86 if currency else 0.65,
+                "evidence": {"selector": selector, "text": str(text)[:160]},
+            }
     return None
 
 
@@ -127,3 +175,20 @@ def _coerce_price(value: Any) -> float | None:
             return parse_price(match.group(0))
         except ValueError:
             return None
+
+
+def _normalize_currency(value: Any) -> str | None:
+    if not value:
+        return None
+    normalized = str(value).strip().upper()
+    aliases = {"€": "EUR", "$": "USD", "£": "GBP", "FR.": "CHF", "SFR": "CHF"}
+    normalized = aliases.get(normalized, normalized)
+    return normalized if re.fullmatch(r"[A-Z]{3}", normalized) else None
+
+
+def _currency_from_text(value: str) -> str | None:
+    normalized = value.upper()
+    for marker, currency in (("EUR", "EUR"), ("€", "EUR"), ("CHF", "CHF"), ("USD", "USD"), ("$", "USD"), ("GBP", "GBP"), ("£", "GBP")):
+        if marker in normalized:
+            return currency
+    return None

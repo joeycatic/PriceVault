@@ -77,6 +77,7 @@ async def create_source(
     body: ConnectorSourceCreate, tenant: dict = Depends(require_plan_admin("pro"))
 ) -> dict:
     source = await queries.create_connector_source(tenant["id"], _source_values(body))
+    await queries.record_product_event(tenant["id"], "connector_activated", tenant.get("plan"))
     await record_audit_event(
         tenant,
         action="connector.created",

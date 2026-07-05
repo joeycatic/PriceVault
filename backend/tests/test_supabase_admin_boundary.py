@@ -12,6 +12,7 @@ ALLOWED_ADMIN_CONTEXT_CALLERS = {
     Path("jobs/insight_tasks.py"),
     Path("jobs/retry.py"),
     Path("jobs/report_tasks.py"),
+    Path("jobs/repricing_tasks.py"),
     Path("jobs/scrape_tasks.py"),
     Path("scheduler.py"),
     Path("webhooks/viva_handler.py"),

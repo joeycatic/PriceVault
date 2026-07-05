@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from auth.plan_guard import require_owner
+from db import queries
 from emails.sequence import schedule_onboarding_sequence
 from models.schemas import OnboardingSequenceRequest
 
@@ -33,6 +34,7 @@ async def schedule_sequence(
     redis = await create_pool(RedisSettings.from_dsn(redis_url))
     try:
         await schedule_onboarding_sequence(tenant["id"], str(session_email), redis)
+        await queries.record_product_event(tenant["id"], "signup", tenant.get("plan"))
     finally:
         await redis.aclose()
     return {"scheduled": True}

@@ -10,9 +10,12 @@ from arq.connections import RedisSettings
 
 from db import queries
 from db.client import supabase_context
-from jobs.billing_tasks import enqueue_due_viva_renewals
+from jobs.billing_tasks import enqueue_due_viva_renewals, reconcile_viva_day
 from jobs.digest_tasks import enqueue_due_alert_digests
+from jobs.cost_tasks import summarize_operational_costs
+from jobs.capacity_tasks import evaluate_capacity
 from jobs.report_tasks import enqueue_due_reports
+from jobs.privacy_tasks import execute_due_privacy_deletions
 from jobs.scrape_tasks import scrape_all
 from logging_config import configure_logging
 from utils.logger import get_logger
@@ -60,6 +63,45 @@ async def enqueue_all_scrapes(redis_url: str) -> int:
 async def run_scheduler() -> None:
     redis = await create_pool(redis_settings())
     scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler.add_job(
+        _run_job,
+        "interval",
+        minutes=5,
+        args=("capacity_evaluation", evaluate_capacity, redis),
+        id="capacity-evaluation",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _run_job,
+        "cron",
+        hour=5,
+        minute=15,
+        args=("cost_summaries", summarize_operational_costs, redis),
+        id="cost-summaries",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _run_job,
+        "cron",
+        hour=4,
+        minute=15,
+        args=("billing_reconciliation", reconcile_viva_day, redis),
+        id="billing-reconciliation",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _run_job,
+        "cron",
+        hour=3,
+        minute=15,
+        args=("privacy_deletions_due", execute_due_privacy_deletions, redis),
+        id="privacy-deletions-due",
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.add_job(
         _run_job,
         "interval",

@@ -116,6 +116,7 @@ async def send_report_run(ctx: dict, *, tenant_id: str, run_id: str) -> dict[str
             run_id,
             {"status": "running", "started_at": now.isoformat()},
         )
+        await queries.insert_usage_event(tenant_id, "report_generations")
         rows = await queries.get_latest_prices(tenant_id)
         schedule = None
         if run.get("schedule_id"):

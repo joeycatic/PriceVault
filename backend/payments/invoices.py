@@ -33,18 +33,19 @@ async def create_paid_invoice(
     if existing:
         return existing
     net = PLAN_NET_AMOUNTS[plan]
-    gross = PLAN_AMOUNTS[plan]
-    token = "".join(character for character in transaction_id if character.isalnum())[:12].upper()
-    year = datetime.fromisoformat(paid_at.replace("Z", "+00:00")).year
+    reverse_charge = tenant.get("tax_treatment") == "eu_reverse_charge"
+    gross = net if reverse_charge else PLAN_AMOUNTS[plan]
+    invoice_number = await queries.next_billing_invoice_number()
     return await queries.create_billing_invoice(
         {
             "tenant_id": tenant["id"],
+            "tenant_reference": tenant["id"],
             "billing_order_id": billing_order_id,
-            "invoice_number": f"PV-{year}-{token}",
+            "invoice_number": invoice_number,
             "transaction_id": transaction_id,
             "plan": plan,
             "net_amount_cents": net,
-            "vat_rate": VAT_RATE,
+            "vat_rate": 0 if reverse_charge else VAT_RATE,
             "vat_amount_cents": gross - net,
             "gross_amount_cents": gross,
             "seller_snapshot": _seller_snapshot(),
@@ -52,7 +53,14 @@ async def create_paid_invoice(
                 "name": tenant.get("shop_name"),
                 "email": tenant.get("invoice_email"),
                 "vat_id": tenant.get("vat_id"),
+                "normalized_vat_id": tenant.get("normalized_vat_id"),
+                "billing_country": tenant.get("billing_country"),
                 "address": tenant.get("billing_address") or {},
+            },
+            "tax_evidence": {
+                "tax_treatment": tenant.get("tax_treatment"),
+                "vat_validation_reference": tenant.get("vat_validation_reference"),
+                "vat_validated_at": tenant.get("vat_validated_at"),
             },
             "issued_at": paid_at,
             "paid_at": paid_at,
@@ -104,7 +112,37 @@ def render_invoice_pdf(invoice: dict[str, Any]) -> bytes:
     y -= 18
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawRightString(width - 48, y, f"Gesamt: {invoice['gross_amount_cents'] / 100:.2f} EUR")
+    if (invoice.get("tax_evidence") or {}).get("tax_treatment") == "eu_reverse_charge":
+        y -= 24
+        pdf.setFont("Helvetica", 9)
+        pdf.drawRightString(width - 48, y, "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge).")
     pdf.setFont("Helvetica", 8)
     pdf.drawString(48, 55, "Der Rechnungsbetrag wurde über Viva Wallet bezahlt.")
+    pdf.save()
+    return output.getvalue()
+
+
+def render_adjustment_pdf(adjustment: dict[str, Any]) -> bytes:
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output, pagesize=A4)
+    _, height = A4
+    kind = {"refund": "ERSTATTUNGSBELEG", "credit_note": "GUTSCHRIFT", "correction": "KORREKTUR"}.get(adjustment["type"], "BELEG")
+    pdf.setTitle(f"{kind} {adjustment['adjustment_number']}")
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(48, height - 60, kind)
+    pdf.setFont("Helvetica", 10)
+    invoice = adjustment.get("billing_invoices") or {}
+    lines = [
+        f"Belegnummer: {adjustment['adjustment_number']}",
+        f"Originalrechnung: {invoice.get('invoice_number', '-')}",
+        f"Datum: {str(adjustment['created_at'])[:10]}",
+        f"Betrag: {adjustment['amount_cents'] / 100:.2f} EUR",
+        f"Grund: {adjustment['reason']}",
+    ]
+    y = height - 115
+    for line in lines:
+        pdf.drawString(48, y, line[:100])
+        y -= 20
+    pdf.drawString(48, 55, "Die Originalrechnung bleibt unverändert erhalten.")
     pdf.save()
     return output.getvalue()

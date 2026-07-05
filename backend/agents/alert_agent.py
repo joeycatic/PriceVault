@@ -184,7 +184,7 @@ class AlertAgent:
         )
         history: dict[str, list[dict[str, Any]]] = {}
         for snapshot in snapshots:
-            if snapshot.get("scrape_ok"):
+            if snapshot.get("scrape_ok") and snapshot.get("validation_state") == "valid":
                 history.setdefault(snapshot["competitor_product_id"], []).append(snapshot)
         for row in rows:
             source_history = history.get(row["competitor_product_id"], [])
@@ -255,6 +255,9 @@ class AlertAgent:
                     )
                 await queries.update_alert(tenant_id, alert["id"], {"last_triggered_at": now})
                 triggered += 1
+                with suppress(Exception):
+                    tenant = await queries.get_tenant_by_id(tenant_id)
+                    await queries.record_product_event(tenant_id, "first_alert", (tenant or {}).get("plan"))
                 break
         return {"checked": checked, "triggered": triggered}
 

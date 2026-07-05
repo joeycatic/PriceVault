@@ -14,6 +14,11 @@ async def _execute(build: Callable[[], Any]) -> list[dict[str, Any]]:
     return response.data or []
 
 
+async def _execute_scalar(build: Callable[[], Any]) -> Any:
+    response = await asyncio.to_thread(lambda: build().execute())
+    return response.data
+
+
 async def list_tenants() -> list[dict[str, Any]]:
     return await _execute(lambda: get_supabase().table("tenants").select("*"))
 
@@ -60,12 +65,135 @@ async def create_billing_invoice(values: dict[str, Any]) -> dict[str, Any]:
     return rows[0]
 
 
+async def next_billing_invoice_number() -> str:
+    value = await _execute_scalar(lambda: get_supabase().rpc("next_billing_invoice_number"))
+    if not value:
+        raise RuntimeError("Rechnungsnummer konnte nicht reserviert werden")
+    if isinstance(value, list):
+        value = value[0]
+    return str(value if not isinstance(value, dict) else next(iter(value.values())))
+
+
+async def create_billing_adjustment(values: dict[str, Any]) -> dict[str, Any]:
+    kind = values["type"]
+    number_value = await _execute_scalar(
+        lambda: get_supabase().rpc("next_billing_adjustment_number", {"kind": kind})
+    )
+    if not number_value:
+        raise RuntimeError("Belegnummer konnte nicht reserviert werden")
+    if isinstance(number_value, list):
+        number_value = number_value[0]
+    number = str(number_value if not isinstance(number_value, dict) else next(iter(number_value.values())))
+    payload = {**values, "adjustment_number": number}
+    if values.get("provider_transaction_id"):
+        rows = await _execute(
+            lambda: get_supabase().table("billing_adjustments").upsert(
+                payload, on_conflict="provider_transaction_id,type", ignore_duplicates=True
+            )
+        )
+        if rows:
+            return rows[0]
+        existing = await _execute(
+            lambda: get_supabase().table("billing_adjustments").select("*").eq("provider_transaction_id", values["provider_transaction_id"]).eq("type", values["type"]).limit(1)
+        )
+        if existing:
+            return existing[0]
+    rows = await _execute(lambda: get_supabase().table("billing_adjustments").insert(payload))
+    return rows[0]
+
+
+async def list_billing_adjustments(tenant_reference: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("billing_adjustments")
+        .select("*")
+        .eq("tenant_reference", tenant_reference)
+        .order("created_at", desc=True)
+    )
+
+
+async def get_billing_adjustment(tenant_reference: str, adjustment_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("billing_adjustments").select("*,billing_invoices(*)").eq("tenant_reference", tenant_reference).eq("id", adjustment_id).limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_billing_refund_request(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("billing_refund_requests").insert(values))
+    return rows[0]
+
+
+async def list_billing_refund_requests(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    def build():
+        query = get_supabase().table("billing_refund_requests").select("*,billing_invoices(invoice_number,gross_amount_cents,currency)")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        return query.order("requested_at", desc=True)
+    return await _execute(build)
+
+
+async def get_billing_refund_request(request_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("billing_refund_requests").select("*,billing_invoices(*)").eq("id", request_id).limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def get_billing_refund_request_by_provider_transaction(transaction_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("billing_refund_requests").select("*,billing_invoices(*)").eq("provider_transaction_id", transaction_id).limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_billing_refund_request(request_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("billing_refund_requests").update(values).eq("id", request_id)
+    )
+    return rows[0] if rows else None
+
+
+async def refundable_amount_cents(tenant_id: str, invoice_id: str) -> int:
+    invoice = await get_billing_invoice(tenant_id, invoice_id)
+    if not invoice:
+        return -1
+    adjustments = await _execute(
+        lambda: get_supabase().table("billing_adjustments").select("amount_cents").eq("tenant_reference", tenant_id).eq("invoice_id", invoice_id).eq("type", "refund")
+    )
+    pending = await _execute(
+        lambda: get_supabase().table("billing_refund_requests").select("amount_cents,status").eq("tenant_id", tenant_id).eq("invoice_id", invoice_id).in_("status", ["requested", "approved", "processing", "succeeded"])
+    )
+    committed = sum(int(row["amount_cents"]) for row in adjustments)
+    reserved = sum(int(row["amount_cents"]) for row in pending if row.get("status") != "succeeded")
+    return max(0, int(invoice["gross_amount_cents"]) - committed - reserved)
+
+
+async def list_paid_billing_orders_since(since_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("billing_orders")
+        .select("*")
+        .eq("status", "paid")
+        .gte("paid_at", since_iso)
+    )
+
+
+async def upsert_billing_reconciliation(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("billing_reconciliations")
+        .upsert(values, on_conflict="reconciliation_date")
+    )
+    return rows[0]
+
+
 async def list_billing_invoices(tenant_id: str) -> list[dict[str, Any]]:
     return await _execute(
         lambda: get_supabase()
         .table("billing_invoices")
         .select("*")
-        .eq("tenant_id", tenant_id)
+        .eq("tenant_reference", tenant_id)
         .order("issued_at", desc=True)
     )
 
@@ -75,9 +203,22 @@ async def get_billing_invoice(tenant_id: str, invoice_id: str) -> dict[str, Any]
         lambda: get_supabase()
         .table("billing_invoices")
         .select("*")
-        .eq("tenant_id", tenant_id)
+        .eq("tenant_reference", tenant_id)
         .eq("id", invoice_id)
         .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def update_billing_invoice_state(
+    tenant_id: str, invoice_id: str, invoice_state: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("billing_invoices")
+        .update({"invoice_state": invoice_state})
+        .eq("tenant_reference", tenant_id)
+        .eq("id", invoice_id)
     )
     return rows[0] if rows else None
 
@@ -89,11 +230,20 @@ async def get_billing_invoice_by_transaction(
         lambda: get_supabase()
         .table("billing_invoices")
         .select("*")
-        .eq("tenant_id", tenant_id)
+        .eq("tenant_reference", tenant_id)
         .eq("transaction_id", transaction_id)
         .limit(1)
     )
     return rows[0] if rows else None
+
+
+async def get_billing_order_for_invoice(invoice_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("billing_invoices").select("billing_orders(order_code)").eq("id", invoice_id).limit(1)
+    )
+    if not rows:
+        return None
+    return rows[0].get("billing_orders")
 
 
 async def list_due_viva_subscriptions(now: str) -> list[dict[str, Any]]:
@@ -466,7 +616,7 @@ async def list_reprice_suggestions(
     return await _execute(
         lambda: get_supabase()
         .table("reprice_suggestions")
-        .select("*, repricing_rules(name,strategy,beat_by_pct,min_margin_pct), products(name), product_variants(name,sku,cost_price,currency)")
+        .select("*, repricing_rules(name,strategy,beat_by_pct,min_margin_pct,approval_mode,max_change_pct,require_healthy_sources), products(name), product_variants(name,sku,cost_price,currency)")
         .eq("tenant_id", tenant_id)
         .eq("status", suggestion_status)
         .order("created_at", desc=True)
@@ -572,6 +722,7 @@ async def get_scrape_targets(
             .table("competitor_products")
             .select(
                 "id,tenant_id,competitor_url,selector_price,competitor_id,"
+                "expected_currency,expected_variant,validation_state,"
                 "health_status,consecutive_failures,last_successful_scrape_at,"
                 "competitors!inner(selector_price,selector_stock,active,scrape_freq_h,last_scraped_at)"
             )
@@ -583,7 +734,7 @@ async def get_scrape_targets(
         if competitor_product_ids:
             query = query.in_("id", competitor_product_ids)
         else:
-            query = query.neq("health_status", "broken")
+            query = query.in_("health_status", ["healthy", "degraded"])
         return query
 
     rows = await _execute(build)
@@ -598,6 +749,9 @@ async def get_scrape_targets(
                 "selector_price": row.get("selector_price") or competitor.get("selector_price"),
                 "selector_stock": competitor.get("selector_stock"),
                 "competitor_id": row["competitor_id"],
+                "expected_currency": row.get("expected_currency"),
+                "expected_variant": row.get("expected_variant"),
+                "source_validation_state": row.get("validation_state") or "unvalidated",
                 "health_status": row.get("health_status"),
                 "consecutive_failures": row.get("consecutive_failures"),
                 "scrape_freq_h": competitor.get("scrape_freq_h"),
@@ -629,6 +783,254 @@ async def get_due_scrape_targets(tenant_id: str | None = None) -> list[dict[str,
 
 async def insert_snapshot(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("price_snapshots").insert(values))
+    return rows[0]
+
+
+async def get_source_policy(
+    tenant_id: str, competitor_product_id: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("source_policies")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("competitor_product_id", competitor_product_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def get_latest_source_snapshot(tenant_id: str, competitor_product_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("price_snapshots").select("currency,price_type,vat_status,shipping_status,variant_evidence,extraction_method,confidence,source_evidence,validation_state,validation_reason,scraped_at,scrape_ok,error_msg").eq("tenant_id", tenant_id).eq("competitor_product_id", competitor_product_id).order("scraped_at", desc=True).limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def upsert_source_policy(
+    tenant_id: str, competitor_product_id: str, values: dict[str, Any]
+) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("source_policies")
+        .upsert(
+            {
+                **values,
+                "tenant_id": tenant_id,
+                "competitor_product_id": competitor_product_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="tenant_id,competitor_product_id",
+        )
+    )
+    return rows[0]
+
+
+async def insert_usage_event(tenant_id: str, metric: str, quantity: float = 1) -> None:
+    await _execute(
+        lambda: get_supabase().table("usage_events").insert(
+            {"tenant_id": tenant_id, "metric": metric, "quantity": quantity}
+        )
+    )
+
+
+async def tenant_usage_summary(tenant_id: str, since_iso: str) -> dict[str, int]:
+    async def count(table: str, *, active: bool = False) -> int:
+        def build():
+            query = get_supabase().table(table).select("id", count="exact", head=True).eq("tenant_id", tenant_id)
+            return query.eq("active", True) if active else query
+        response = await asyncio.to_thread(lambda: build().execute())
+        return int(response.count or 0)
+
+    products, competitors, scrapes, reports, snapshots = await asyncio.gather(
+        count("products", active=True), count("competitors", active=True),
+        count("price_snapshots"), count("report_runs"), count("price_snapshots"),
+    )
+    usage = await _execute(
+        lambda: get_supabase().table("usage_events").select("metric,quantity").eq("tenant_id", tenant_id).gte("occurred_at", since_iso)
+    )
+    totals = {"emails": 0, "report_generations": reports, "stored_snapshots": snapshots}
+    for event in usage:
+        if event["metric"] in totals:
+            totals[event["metric"]] += round(float(event["quantity"]))
+    return {"products": products, "competitors": competitors, "scrapes": scrapes, **totals}
+
+
+async def record_product_event(
+    tenant_id: str, event_name: str, plan: str | None, dedupe_key: str = "once"
+) -> None:
+    await _execute(
+        lambda: get_supabase().table("product_events").upsert(
+            {"tenant_id": tenant_id, "event_name": event_name, "plan": plan, "dedupe_key": dedupe_key},
+            on_conflict="tenant_id,event_name,dedupe_key", ignore_duplicates=True,
+        )
+    )
+
+
+async def list_usage_events_since(since_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("usage_events").select("*").gte("occurred_at", since_iso)
+    )
+
+
+async def list_internal_cost_rates() -> list[dict[str, Any]]:
+    return await _execute(lambda: get_supabase().table("internal_cost_rates").select("*"))
+
+
+async def upsert_tenant_cost_summary(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("tenant_cost_summaries").upsert(
+            values, on_conflict="tenant_id,summary_date"
+        )
+    )
+    return rows[0]
+
+
+async def list_tenant_cost_summaries(since_date: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("tenant_cost_summaries").select("*").gte("summary_date", since_date)
+    )
+
+
+async def list_product_events_since(since_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("product_events").select("*").gte("occurred_at", since_iso)
+    )
+
+
+async def list_billing_reconciliations(limit: int = 30) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("billing_reconciliations").select("*").order("reconciliation_date", desc=True).limit(limit)
+    )
+
+
+async def count_automatic_repricing_changes_since(tenant_id: str, since_iso: str) -> int:
+    response = await asyncio.to_thread(
+        lambda: get_supabase()
+        .table("repricing_changes")
+        .select("id", count="exact", head=True)
+        .eq("tenant_id", tenant_id)
+        .eq("actor_type", "automatic")
+        .eq("status", "succeeded")
+        .gte("created_at", since_iso)
+        .execute()
+    )
+    return int(response.count or 0)
+
+
+async def create_repricing_change(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("repricing_changes").insert(
+            {**values, "tenant_id": tenant_id}
+        )
+    )
+    return rows[0]
+
+
+async def update_repricing_change(
+    tenant_id: str, change_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("repricing_changes")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", change_id)
+    )
+    return rows[0] if rows else None
+
+
+async def get_repricing_change(tenant_id: str, change_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("repricing_changes").select("*").eq("tenant_id", tenant_id).eq("id", change_id).limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def list_repricing_changes(tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("repricing_changes").select("*,product_variants(name,sku,currency,external_refs,product_id,is_default)").eq("tenant_id", tenant_id).order("created_at", desc=True).limit(limit)
+    )
+
+
+async def list_public_incidents(limit: int = 50) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("public_incidents").select("*").order("started_at", desc=True).limit(limit)
+    )
+
+
+async def create_public_incident(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("public_incidents").insert(values))
+    return rows[0]
+
+
+async def update_public_incident(incident_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("public_incidents").update({**values, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", incident_id)
+    )
+    return rows[0] if rows else None
+
+
+async def delete_public_incident(incident_id: str) -> bool:
+    return bool(await _execute(lambda: get_supabase().table("public_incidents").delete().eq("id", incident_id)))
+
+
+async def insert_csp_violation(values: dict[str, Any]) -> None:
+    await _execute(lambda: get_supabase().table("csp_violation_reports").insert(values))
+
+
+async def upsert_internal_cost_rate(metric: str, cost_eur_per_unit: float) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("internal_cost_rates").upsert({"metric": metric, "cost_eur_per_unit": cost_eur_per_unit, "updated_at": datetime.now(timezone.utc).isoformat()}, on_conflict="metric")
+    )
+    return rows[0]
+
+
+async def create_recovery_drill(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("recovery_drills").insert(values))
+    return rows[0]
+
+
+async def list_recovery_drills() -> list[dict[str, Any]]:
+    return await _execute(lambda: get_supabase().table("recovery_drills").select("*").order("created_at", desc=True))
+
+
+async def list_backup_verifications() -> list[dict[str, Any]]:
+    return await _execute(lambda: get_supabase().table("backup_verifications").select("*").order("backup_observed_at", desc=True))
+
+
+async def create_backup_verification(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(lambda: get_supabase().table("backup_verifications").insert(values))
+    return rows[0]
+
+
+async def list_operator_records(table: str) -> list[dict[str, Any]]:
+    allowed = {"security_incidents", "billing_reconciliation_exceptions", "source_repair_assignments"}
+    if table not in allowed:
+        raise ValueError("Unsupported operator record")
+    return await _execute(lambda: get_supabase().table(table).select("*").order("created_at", desc=True))
+
+
+async def create_operator_record(table: str, values: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"security_incidents", "billing_reconciliation_exceptions", "source_repair_assignments"}
+    if table not in allowed:
+        raise ValueError("Unsupported operator record")
+    rows = await _execute(lambda: get_supabase().table(table).insert(values))
+    return rows[0]
+
+
+async def update_operator_record(table: str, record_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    allowed = {"security_incidents", "billing_reconciliation_exceptions", "source_repair_assignments"}
+    if table not in allowed:
+        raise ValueError("Unsupported operator record")
+    rows = await _execute(lambda: get_supabase().table(table).update(values).eq("id", record_id))
+    return rows[0] if rows else None
+
+
+async def upsert_capacity_evaluation(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("capacity_evaluations").upsert(values, on_conflict="window_started_at,metric")
+    )
     return rows[0]
 
 
@@ -703,7 +1105,7 @@ async def list_recent_snapshots(tenant_id: str, limit: int = 2000) -> list[dict[
     return await _execute(
         lambda: get_supabase()
         .table("price_snapshots")
-        .select("competitor_product_id,price,in_stock,scrape_ok,scraped_at")
+        .select("competitor_product_id,price,in_stock,scrape_ok,scraped_at,validation_state")
         .eq("tenant_id", tenant_id)
         .order("scraped_at", desc=True)
         .limit(limit)
@@ -730,9 +1132,10 @@ async def get_recent_source_snapshots(
     return await _execute(
         lambda: get_supabase()
         .table("price_snapshots")
-        .select("price,in_stock,scrape_ok,scraped_at")
+        .select("price,in_stock,scrape_ok,scraped_at,validation_state")
         .eq("tenant_id", tenant_id)
         .eq("competitor_product_id", competitor_product_id)
+        .eq("validation_state", "valid")
         .order("scraped_at", desc=True)
         .limit(limit)
     )
@@ -1473,3 +1876,59 @@ async def list_privacy_requests(tenant_id: str, limit: int = 50) -> list[dict[st
         .order("requested_at", desc=True)
         .limit(limit)
     )
+
+
+async def update_privacy_request(
+    tenant_id: str, request_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("privacy_requests")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", request_id)
+    )
+    return rows[0] if rows else None
+
+
+async def list_due_privacy_deletions(now_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("privacy_requests")
+        .select("*")
+        .in_("status", ["cooling_off", "scheduled"])
+        .lte("scheduled_for", now_iso)
+    )
+
+
+async def create_privacy_deletion_receipt(values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase().table("privacy_deletion_receipts").insert(values)
+    )
+    return rows[0]
+
+
+async def list_pending_privacy_receipts(now_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase().table("privacy_deletion_receipts").select("*").in_("delivery_status", ["pending", "failed"]).not_.is_("recipient_email", "null").limit(100)
+    )
+
+
+async def update_privacy_deletion_receipt(receipt_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase().table("privacy_deletion_receipts").update(values).eq("id", receipt_id)
+    )
+    return rows[0] if rows else None
+
+
+async def erase_expired_receipt_emails(now_iso: str) -> None:
+    await _execute(
+        lambda: get_supabase().table("privacy_deletion_receipts").update({"recipient_email": None, "delivery_status": "email_erased"}).lte("erase_recipient_at", now_iso).not_.is_("recipient_email", "null")
+    )
+
+
+async def delete_tenant(tenant_id: str) -> bool:
+    rows = await _execute(
+        lambda: get_supabase().table("tenants").delete().eq("id", tenant_id)
+    )
+    return bool(rows)

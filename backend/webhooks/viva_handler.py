@@ -38,7 +38,8 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=400, detail="Ungültiger Payload") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Ungültiger Payload")
-    if _value(payload, "eventTypeId") != 1796:
+    event_type = _value(payload, "eventTypeId")
+    if event_type not in (1796, 1797):
         return {"ok": True}
 
     event = _value(payload, "eventData")
@@ -48,6 +49,54 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
     order_code = _value(event, "orderCode")
     if not transaction_id or not order_code:
         raise HTTPException(status_code=400, detail="Viva-Transaktionsdaten fehlen")
+
+    if event_type == 1797:
+        parent_id = str(_value(event, "parentId") or "")
+        status_id = _value(event, "statusId")
+        amount = float(_value(event, "amount") or 0)
+        with supabase_context(admin=True):
+            refund = await queries.get_billing_refund_request_by_provider_transaction(str(transaction_id))
+            if not refund or refund.get("status") == "succeeded":
+                return {"ok": True}
+            invoice = refund.get("billing_invoices") or {}
+            amount_cents = int(refund["amount_cents"])
+            amount_matches = amount_cents in {round(abs(amount)), round(abs(amount) * 100)}
+            if (
+                refund.get("status") != "processing"
+                or parent_id != str(invoice.get("transaction_id") or "")
+                or int(order_code) != int((await queries.get_billing_order_for_invoice(refund["invoice_id"]) or {}).get("order_code") or 0)
+                or status_id != "F"
+                or not amount_matches
+            ):
+                raise HTTPException(status_code=400, detail="Viva-Erstattung konnte nicht bestätigt werden")
+            evidence = {
+                "parent_transaction_id": parent_id,
+                "reversal_transaction_id": transaction_id,
+                "order_code": order_code,
+                "status_id": status_id,
+                "event_type_id": event_type,
+            }
+            await queries.create_billing_adjustment({
+                "tenant_reference": refund["tenant_reference"], "invoice_id": refund["invoice_id"],
+                "type": "refund", "amount_cents": amount_cents,
+                "reason": refund["reason"], "provider_transaction_id": str(transaction_id),
+                "evidence": evidence,
+            })
+            await queries.create_billing_adjustment({
+                "tenant_reference": refund["tenant_reference"], "invoice_id": refund["invoice_id"],
+                "type": "credit_note", "amount_cents": amount_cents,
+                "reason": f"Gutschrift zur Erstattung: {refund['reason']}",
+                "provider_transaction_id": str(transaction_id), "evidence": evidence,
+            })
+            remaining = await queries.refundable_amount_cents(refund["tenant_reference"], refund["invoice_id"])
+            await queries.update_billing_invoice_state(
+                refund["tenant_reference"], refund["invoice_id"], "refunded" if remaining == 0 else "credited"
+            )
+            await queries.update_billing_refund_request(refund["id"], {
+                "status": "succeeded", "provider_response": {**(refund.get("provider_response") or {}), "verified_webhook": evidence},
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            })
+        return {"ok": True}
 
     with supabase_context(admin=True):
         order = await queries.get_billing_order(int(order_code))
@@ -108,4 +157,5 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
                 "next_payment_retry_at": None,
             },
         )
+        await queries.record_product_event(order["tenant_id"], "paid_conversion", order["plan"])
     return {"ok": True}
