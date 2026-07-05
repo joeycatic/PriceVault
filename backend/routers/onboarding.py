@@ -1,6 +1,7 @@
 """Onboarding workflow endpoints."""
 
 import os
+from contextlib import suppress
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -34,7 +35,8 @@ async def schedule_sequence(
     redis = await create_pool(RedisSettings.from_dsn(redis_url))
     try:
         await schedule_onboarding_sequence(tenant["id"], str(session_email), redis)
-        await queries.record_product_event(tenant["id"], "signup", tenant.get("plan"))
+        with suppress(Exception):
+            await queries.record_product_event(tenant["id"], "signup", tenant.get("plan"))
     finally:
         await redis.aclose()
     return {"scheduled": True}

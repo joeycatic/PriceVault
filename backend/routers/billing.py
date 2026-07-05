@@ -1,6 +1,7 @@
 """Viva Smart Checkout subscription and invoice endpoints."""
 
 import io
+from contextlib import suppress
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -169,5 +170,6 @@ async def cancel_subscription(tenant: dict = Depends(require_owner)) -> dict[str
             "billing_status_metadata": {"cancel_requested": True},
         },
     )
-    await queries.record_product_event(tenant["id"], "cancellation", tenant.get("plan"))
+    with suppress(Exception):
+        await queries.record_product_event(tenant["id"], "cancellation", tenant.get("plan"))
     return {"canceled": True}

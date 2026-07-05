@@ -15,7 +15,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from db import queries
-from scrapers.playwright_scraper import extract_offer
+from scrapers.playwright_scraper import extract_offer, extract_price
 from utils.logger import get_logger
 from utils.price_parser import parse_price
 from utils.stealth import close_stealth_page, get_stealth_page, navigate_stealth
@@ -212,6 +212,17 @@ class ScraperAgent:
         }
 
     async def _extract_automatic(self, page) -> dict[str, Any]:
+        legacy_price = await extract_price(page)
+        if legacy_price is not None:
+            return {
+                "price": legacy_price,
+                "currency": "EUR",
+                "in_stock": None,
+                "price_type": "regular",
+                "method": "structured",
+                "confidence": 0.9,
+                "evidence": {"extractor": "legacy_price"},
+            }
         offer = await extract_offer(page)
         if offer is not None:
             return offer

@@ -1,6 +1,7 @@
 """Verified Viva payment webhook handling."""
 
 from calendar import monthrange
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any
 
@@ -157,5 +158,6 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
                 "next_payment_retry_at": None,
             },
         )
-        await queries.record_product_event(order["tenant_id"], "paid_conversion", order["plan"])
+        with suppress(Exception):
+            await queries.record_product_event(order["tenant_id"], "paid_conversion", order["plan"])
     return {"ok": True}

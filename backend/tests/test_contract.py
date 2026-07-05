@@ -929,8 +929,12 @@ def test_product_create_allows_unlimited_agency_products(monkeypatch):
 
 def test_product_routes_list_update_delete_and_mappings(monkeypatch):
     import main
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
     from db import queries
     from routers import get_tenant
+    from routers import products
 
     async def fake_tenant():
         yield "tenant-1"
@@ -972,6 +976,22 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
         assert tenant_id == "tenant-1"
         return mapping_id == "mapping-1"
 
+    async def fake_evaluate_source_policy(url):
+        assert url == "https://shop.example/p"
+        return SimpleNamespace(
+            allowed=True,
+            robots_result="allowed",
+            checked_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+            crawl_delay_seconds=2,
+            approved_host="shop.example",
+            block_reason=None,
+        )
+
+    async def fake_upsert_source_policy(tenant_id, competitor_product_id, values):
+        assert (tenant_id, competitor_product_id) == ("tenant-1", "mapping-2")
+        assert values["customer_authorized_at"] == "2026-06-30T00:00:00+00:00"
+        return values
+
     monkeypatch.setattr(queries, "list_products", fake_list_products)
     monkeypatch.setattr(queries, "update_product", fake_update_product)
     monkeypatch.setattr(queries, "soft_delete_product", fake_soft_delete_product)
@@ -981,6 +1001,8 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
     monkeypatch.setattr(queries, "get_competitor", fake_get_competitor)
     monkeypatch.setattr(queries, "get_product_variant", fake_get_variant)
     monkeypatch.setattr(queries, "delete_product_mapping", fake_delete_product_mapping)
+    monkeypatch.setattr(queries, "upsert_source_policy", fake_upsert_source_policy)
+    monkeypatch.setattr(products, "evaluate_source_policy", fake_evaluate_source_policy)
     main.app.dependency_overrides[get_tenant] = fake_tenant
     try:
         client = TestClient(main.app)
@@ -996,6 +1018,7 @@ def test_product_routes_list_update_delete_and_mappings(monkeypatch):
                 "competitor_url": "https://shop.example/p",
                 "competitor_sku": "SKU-1",
                 "selector_price": ".price",
+                "customer_authorized": True,
             },
         )
         delete_mapping_response = client.delete("/products/product-1/mappings/mapping-1")
@@ -2548,7 +2571,15 @@ def test_scraper_agent_uses_deterministic_extraction_before_llm(monkeypatch):
 
     result = asyncio.run(ScraperAgent()._extract_automatic(marker))
 
-    assert result == {"price": 89.95, "currency": "EUR", "in_stock": None}
+    assert result == {
+        "price": 89.95,
+        "currency": "EUR",
+        "in_stock": None,
+        "price_type": "regular",
+        "method": "structured",
+        "confidence": 0.9,
+        "evidence": {"extractor": "legacy_price"},
+    }
 
 
 def test_scraper_agent_does_not_require_llm_for_automatic_scraping(monkeypatch):
@@ -2747,7 +2778,7 @@ def test_billing_checkout_creates_viva_order(monkeypatch):
     from routers import billing
 
     async def fake_current_tenant():
-        return {"id": "tenant-1", "plan": "free", "_email": "owner@example.com"}
+        return {"id": "tenant-1", "plan": "free", "_email": "owner@example.com", "billing_country": "DE"}
 
     calls = []
 
@@ -2759,22 +2790,47 @@ def test_billing_checkout_creates_viva_order(monkeypatch):
         calls.append(payload)
         return payload
 
+    async def fake_update_tenant(tenant_id, values):
+        calls.append({"tenant_id": tenant_id, "tenant_update": values})
+        return values
+
     monkeypatch.setattr(billing.viva, "create_payment_order", fake_create_payment_order)
     monkeypatch.setattr(billing.queries, "create_billing_order", fake_create_billing_order)
+    monkeypatch.setattr(billing.queries, "update_tenant", fake_update_tenant)
     monkeypatch.setattr(billing.viva, "checkout_url", lambda code: f"https://viva.example/{code}")
     main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
     try:
         client = TestClient(main.app)
-        response = client.post("/billing/checkout", json={"plan": "pro"})
+        response = client.post("/billing/checkout", json={"plan": "pro", "billing_country": "DE"})
     finally:
         main.app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json() == {"url": "https://viva.example/1234567890123456"}
-    assert calls == [
-        {"tenant_id": "tenant-1", "email": "owner@example.com", "plan": "pro"},
-            {"tenant_id": "tenant-1", "order_code": 1234567890123456, "plan": "pro", "amount_cents": 3451},
-    ]
+    assert calls[0] == {
+        "tenant_id": "tenant-1",
+        "tenant_update": {
+            "billing_country": "DE",
+            "normalized_vat_id": None,
+            "vat_validation_status": "valid",
+            "vat_validated_at": calls[0]["tenant_update"]["vat_validated_at"],
+            "vat_validation_reference": calls[0]["tenant_update"]["vat_validation_reference"],
+            "tax_treatment": "de_19",
+        },
+    }
+    assert calls[1] == {
+        "tenant_id": "tenant-1",
+        "email": "owner@example.com",
+        "plan": "pro",
+        "amount_cents": 3451,
+    }
+    assert calls[2]["tenant_id"] == "tenant-1"
+    assert calls[2]["order_code"] == 1234567890123456
+    assert calls[2]["plan"] == "pro"
+    assert calls[2]["amount_cents"] == 3451
+    assert calls[2]["net_amount_cents"] == 2900
+    assert calls[2]["vat_rate"] == 19
+    assert calls[2]["vat_amount_cents"] == 551
 
 
 def test_billing_checkout_requires_owner_role(monkeypatch):
@@ -2818,18 +2874,22 @@ def test_billing_checkout_requires_viva_configuration(monkeypatch):
     from auth.dependencies import get_current_tenant
 
     async def fake_current_tenant():
-        return {"id": "tenant-1", "plan": "free"}
+        return {"id": "tenant-1", "plan": "free", "billing_country": "DE"}
 
     from routers import billing
 
     async def missing_config(**_payload):
         raise billing.viva.VivaConfigurationError("missing")
 
+    async def fake_update_tenant(*_args, **_kwargs):
+        return {}
+
     monkeypatch.setattr(billing.viva, "create_payment_order", missing_config)
+    monkeypatch.setattr(billing.queries, "update_tenant", fake_update_tenant)
     main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
     try:
         client = TestClient(main.app)
-        response = client.post("/billing/checkout", json={"plan": "pro"})
+        response = client.post("/billing/checkout", json={"plan": "pro", "billing_country": "DE"})
     finally:
         main.app.dependency_overrides.clear()
 
@@ -3224,6 +3284,14 @@ def test_scrape_target_returns_serialized_success(monkeypatch):
             }
         ]
 
+    async def fake_source_policy(_tenant_id, _mapping_id):
+        return {
+            "robots_result": "allowed",
+            "robots_checked_at": "2099-06-30T00:00:00+00:00",
+            "approved_host": "shop.example",
+            "domain_requests_per_minute": 20,
+        }
+
     class FakeScraperAgent:
         async def scrape(self, target):
             assert target.competitor_product_id == "mapping-1"
@@ -3236,6 +3304,7 @@ def test_scrape_target_returns_serialized_success(monkeypatch):
                 scrape_ok=True,
                 error_msg=None,
                 scraped_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+                validation_state="valid",
             )
 
     retry_calls = []
@@ -3250,6 +3319,7 @@ def test_scrape_target_returns_serialized_success(monkeypatch):
             return {"checked": 1, "triggered": 0}
 
     monkeypatch.setattr(queries, "get_scrape_targets", fake_get_scrape_targets)
+    monkeypatch.setattr(queries, "get_source_policy", fake_source_policy)
     monkeypatch.setattr(scrape_tasks, "ScraperAgent", FakeScraperAgent)
     monkeypatch.setattr(scrape_tasks, "maybe_retry_or_dlq", fake_maybe_retry_or_dlq)
     monkeypatch.setattr(scrape_tasks, "AlertAgent", FakeAlertAgent)
@@ -3285,6 +3355,14 @@ def test_scrape_target_retry_requires_an_additional_quota_slot(monkeypatch):
     async def fake_tenant(_tenant_id):
         return {"id": "tenant-1", "plan": "free"}
 
+    async def fake_source_policy(_tenant_id, _mapping_id):
+        return {
+            "robots_result": "allowed",
+            "robots_checked_at": "2099-06-30T00:00:00+00:00",
+            "approved_host": "shop.example",
+            "domain_requests_per_minute": 20,
+        }
+
     async def fake_reserve(redis, *, tenant_id, plan, requested):
         assert redis is marker
         assert (tenant_id, plan, requested) == ("tenant-1", "free", 1)
@@ -3297,6 +3375,7 @@ def test_scrape_target_retry_requires_an_additional_quota_slot(monkeypatch):
     marker = object()
     monkeypatch.setattr(queries, "get_scrape_targets", fake_targets)
     monkeypatch.setattr(queries, "get_tenant_by_id", fake_tenant)
+    monkeypatch.setattr(queries, "get_source_policy", fake_source_policy)
     monkeypatch.setattr(scrape_tasks, "reserve_scrape_slots", fake_reserve)
     monkeypatch.setattr(scrape_tasks, "ScraperAgent", UnexpectedScraper)
 

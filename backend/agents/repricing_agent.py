@@ -36,10 +36,10 @@ def automatic_apply_blocker(
     if not currency_matches:
         return "Währung oder Variante stimmen nicht mit der eigenen Variante überein"
     change_pct = abs(suggested_price - current_price) / current_price * 100
-    if change_pct > 5:
-        return f"Preisänderung von {change_pct:.1f} % erfordert immer eine manuelle Freigabe"
     if change_pct > max_change_pct:
         return f"Preisänderung von {change_pct:.1f} % überschreitet das Limit von {max_change_pct:.1f} %"
+    if change_pct > 5:
+        return f"Preisänderung von {change_pct:.1f} % erfordert immer eine manuelle Freigabe"
     return None
 
 

@@ -6,6 +6,8 @@ import os
 
 import resend
 
+from contextlib import suppress
+
 from db import queries
 from db.client import supabase_context
 from emails.settings import app_url, resend_sender
@@ -35,6 +37,7 @@ async def send_email(ctx: dict, *, tenant_id: str, to: str, template: str) -> di
             "html": html,
         },
     )
-    with supabase_context(admin=True):
-        await queries.insert_usage_event(tenant_id, "emails")
+    with suppress(Exception):
+        with supabase_context(admin=True):
+            await queries.insert_usage_event(tenant_id, "emails")
     return {"sent": to}

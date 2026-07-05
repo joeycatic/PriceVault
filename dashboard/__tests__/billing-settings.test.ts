@@ -10,7 +10,7 @@ describe('billing settings', () => {
     expect(source).toContain("tenant?.membership_role === 'owner'")
     expect(source).toContain('canManageBilling &&')
     expect(source).toContain('Nur Owner dürfen Plan und Abrechnung verwalten.')
-    expect(source).toContain('Viva Smart Checkout')
+    expect(source).toContain('Checkout über Viva')
     expect(source).toContain("backendFetch('/billing/cancel'")
     expect(source.indexOf("tenant.membership_role !== 'owner'")).toBeLessThan(
       source.indexOf("backendFetch('/billing/checkout'"),

@@ -104,8 +104,10 @@ async def renew_viva_subscription(
     period: str,
 ) -> dict[str, str]:
     idempotency_key = f"pricevault:{tenant_id}:{period}"
-    with supabase_context(admin=True):
-        billing_tenant = await queries.get_tenant_by_id(tenant_id)
+    billing_tenant = None
+    if ctx.get("redis"):
+        with supabase_context(admin=True):
+            billing_tenant = await queries.get_tenant_by_id(tenant_id)
     amount_cents = (
         viva.PLAN_NET_AMOUNTS[plan]
         if billing_tenant and billing_tenant.get("tax_treatment") == "eu_reverse_charge"

@@ -118,6 +118,18 @@ async def test_scrape(body: ScrapeTestRequest, tenant_id: str = Depends(get_tena
     payload.pop("competitor_product_id")
     payload.pop("currency")
     payload.pop("scraped_at")
+    for key in (
+        "price_type",
+        "vat_status",
+        "shipping_status",
+        "variant_evidence",
+        "extraction_method",
+        "confidence",
+        "source_evidence",
+        "validation_state",
+        "validation_reason",
+    ):
+        payload.pop(key, None)
     return payload
 
 

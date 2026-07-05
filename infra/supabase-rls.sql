@@ -28,6 +28,24 @@ alter table public.connector_sync_runs enable row level security;
 alter table public.alert_channel_deliveries enable row level security;
 alter table public.privacy_requests    enable row level security;
 alter table public.support_tickets     enable row level security;
+alter table public.source_policies     enable row level security;
+alter table public.repricing_changes   enable row level security;
+alter table public.usage_events        enable row level security;
+alter table public.internal_cost_rates enable row level security;
+alter table public.tenant_cost_summaries enable row level security;
+alter table public.product_events      enable row level security;
+alter table public.privacy_deletion_receipts enable row level security;
+alter table public.billing_adjustments enable row level security;
+alter table public.billing_reconciliations enable row level security;
+alter table public.security_incidents enable row level security;
+alter table public.recovery_drills enable row level security;
+alter table public.billing_refund_requests enable row level security;
+alter table public.public_incidents enable row level security;
+alter table public.csp_violation_reports enable row level security;
+alter table public.capacity_evaluations enable row level security;
+alter table public.backup_verifications enable row level security;
+alter table public.billing_reconciliation_exceptions enable row level security;
+alter table public.source_repair_assignments enable row level security;
 
 create or replace function public.my_tenant_id()
 returns uuid
