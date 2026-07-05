@@ -3,6 +3,13 @@ export type Tenant = {
   user_id: string
   shop_name: string
   shop_url: string
+  company_legal_name?: string | null
+  company_size?: 'solo' | 'small' | 'medium' | 'large' | 'enterprise' | null
+  industry?: 'grow_horticulture' | 'home_living' | 'electronics' | 'beauty_health' | 'sports_outdoor' | 'fashion' | 'food_beverage' | 'b2b_industrial' | 'other' | null
+  shop_platform?: 'shopify' | 'woocommerce' | 'shopware' | 'magento' | 'custom' | 'marketplace' | 'unknown' | null
+  headquarters_country?: string
+  headquarters_city?: string | null
+  annual_revenue_band?: 'under_250k' | '250k_1m' | '1m_5m' | '5m_25m' | 'over_25m' | 'undisclosed' | null
   plan: 'free' | 'trial' | 'starter' | 'pro' | 'agency'
   billing_provider?: 'viva' | null
   viva_initial_transaction_id?: string | null
@@ -15,6 +22,13 @@ export type Tenant = {
   last_payment_error?: string | null
   next_payment_retry_at?: string | null
   billing_status_metadata?: Record<string, unknown>
+  billing_country?: string | null
+  normalized_vat_id?: string | null
+  vat_validation_status?: 'unverified' | 'valid' | 'invalid' | 'unavailable'
+  vat_validated_at?: string | null
+  vat_validation_reference?: string | null
+  tax_treatment?: 'de_19' | 'eu_reverse_charge' | null
+  automatic_repricing_suspended?: boolean
   membership_role?: 'owner' | 'admin' | 'analyst' | 'viewer' | 'billing' | 'member'
   timezone?: string
   locale?: string
@@ -79,7 +93,7 @@ export type CompetitorProduct = {
   competitor_sku: string | null
   selector_price: string | null
   active: boolean
-  health_status: 'healthy' | 'degraded' | 'broken'
+  health_status: 'healthy' | 'degraded' | 'broken' | 'blocked'
   consecutive_failures: number
   last_failure_at: string | null
   last_failure_reason: string | null
@@ -141,7 +155,7 @@ export type LatestPrice = {
   variant_id: string
   competitor_id: string
   competitor_url: string
-  health_status: 'healthy' | 'degraded' | 'broken'
+  health_status: 'healthy' | 'degraded' | 'broken' | 'blocked'
   consecutive_failures: number
   last_failure_at: string | null
   last_failure_reason: string | null

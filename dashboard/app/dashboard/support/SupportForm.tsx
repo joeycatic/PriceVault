@@ -1,5 +1,6 @@
 'use client'
 
+import { CheckCircle2, Send, XCircle } from 'lucide-react'
 import { useState, useTransition } from 'react'
 
 type Result = { ok: boolean; message: string }
@@ -43,8 +44,16 @@ export function SupportForm({ action }: { action: (formData: FormData) => Promis
         <span className="field-label">Nachricht</span>
         <textarea className="field min-h-36" name="message" required minLength={10} maxLength={5000} />
       </label>
-      {result && <p className={`text-sm ${result.ok ? 'text-merchant-success' : 'text-red-700'}`} role="status">{result.message}</p>}
-      <button className="button-primary" disabled={pending}>{pending ? 'Wird gesendet …' : 'Anfrage senden'}</button>
+      {result && (
+        <div className={`flex gap-3 rounded-xl border px-4 py-3 text-sm ${result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`} role="status">
+          {result.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+          <p className="font-semibold">{result.message}</p>
+        </div>
+      )}
+      <button className="button-primary gap-2" disabled={pending}>
+        <Send className="h-4 w-4" aria-hidden="true" />
+        {pending ? 'Wird gesendet …' : 'Anfrage senden'}
+      </button>
     </form>
   )
 }

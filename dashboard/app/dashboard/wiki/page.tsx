@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { BookOpen, Bug, Server } from 'lucide-react'
 
 import { PageHeader } from '@/components/ui/MerchantUI'
 
@@ -86,9 +87,9 @@ const quickLinks = [
 
 function FoldableChapter({ chapter, children }: { chapter: (typeof chapters)[number], children?: ReactNode }) {
   return (
-    <details id={chapter.id} className="group overflow-hidden rounded-lg border border-vault-700 bg-white open:border-merchant-success/35 open:bg-vault-800" open={chapter.id === 'setup'}>
-      <summary className="grid cursor-pointer list-none gap-4 px-4 py-4 transition hover:bg-vault-800/70 sm:grid-cols-[56px_minmax(0,1fr)_24px] sm:px-5">
-        <span className="font-mono text-[11px] font-bold text-merchant-success">{chapter.mark}</span>
+    <details id={chapter.id} className="group overflow-hidden rounded-2xl border border-vault-700 bg-white shadow-sm open:border-merchant-success/35 open:bg-vault-950" open={chapter.id === 'setup'}>
+      <summary className="grid cursor-pointer list-none gap-4 px-4 py-4 transition hover:bg-vault-950 sm:grid-cols-[56px_minmax(0,1fr)_24px] sm:px-5">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-vault-100 font-mono text-[11px] font-bold text-white">{chapter.mark}</span>
         <span className="min-w-0">
           <span className="block font-semibold text-vault-100">{chapter.title}</span>
           <span className="mt-1 block text-sm leading-6 text-vault-400">{chapter.summary}</span>
@@ -97,7 +98,7 @@ function FoldableChapter({ chapter, children }: { chapter: (typeof chapters)[num
           +
         </span>
       </summary>
-      <div className="border-t border-vault-700 px-4 py-5 sm:px-5">
+      <div className="border-t border-vault-700 bg-white px-4 py-5 sm:px-5">
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_220px]">
           <div className="space-y-3 text-sm leading-6 text-vault-300">
             {chapter.body.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
@@ -130,9 +131,9 @@ export default function WikiPage() {
 
       <div className="grid items-start gap-6 xl:grid-cols-[240px_minmax(0,1fr)_320px]">
         <aside className="sticky top-24 hidden xl:block">
-          <nav className="grid gap-1 border border-vault-700 bg-vault-900/80 p-2" aria-label="Referenzindex">
+          <nav className="grid gap-1 rounded-2xl border border-vault-700 bg-white p-2 shadow-panel" aria-label="Referenzindex">
             {chapters.map((chapter) => (
-              <a key={chapter.id} href={`#${chapter.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs text-vault-300 transition hover:bg-vault-800 hover:text-merchant-success">
+              <a key={chapter.id} href={`#${chapter.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2 rounded-xl px-3 py-2 text-xs text-vault-300 transition hover:bg-vault-950 hover:text-merchant-success">
                 <span className="font-mono text-vault-500">{chapter.mark}</span>
                 <span>{chapter.title}</span>
               </a>
@@ -171,8 +172,8 @@ export default function WikiPage() {
         </section>
 
         <aside className="space-y-4">
-          <section className="rounded-lg border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-quicklinks">
-            <p className="eyebrow">Direktzugriff</p>
+          <section className="rounded-2xl border border-vault-700 bg-white p-5 shadow-panel" aria-labelledby="reference-quicklinks">
+            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-vault-500"><BookOpen className="h-4 w-4" aria-hidden="true" />Direktzugriff</p>
             <h2 id="reference-quicklinks" className="mt-2 font-semibold">Arbeitsbereiche</h2>
             <div className="mt-4 grid gap-2">
               {quickLinks.map(([label, href]) => (
@@ -183,8 +184,8 @@ export default function WikiPage() {
             </div>
           </section>
 
-          <section className="border border-merchant-success/30 bg-emerald-100 p-5" aria-labelledby="reference-troubleshooting">
-            <p className="eyebrow">Fehlerbehebung</p>
+          <section className="rounded-2xl border border-merchant-success/30 bg-emerald-100 p-5" aria-labelledby="reference-troubleshooting">
+            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-merchant-success"><Bug className="h-4 w-4" aria-hidden="true" />Fehlerbehebung</p>
             <h2 id="reference-troubleshooting" className="mt-2 font-semibold">Scraping läuft nicht</h2>
             <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-vault-300">
               <li><span className="font-mono text-vault-100">BACKEND_URL</span> prüfen.</li>
@@ -195,8 +196,8 @@ export default function WikiPage() {
             </ol>
           </section>
 
-          <section className="rounded-lg border border-vault-700 bg-vault-900/80 p-5" aria-labelledby="reference-env">
-            <p className="eyebrow">Betrieb</p>
+          <section className="rounded-2xl border border-vault-700 bg-white p-5 shadow-panel" aria-labelledby="reference-env">
+            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-vault-500"><Server className="h-4 w-4" aria-hidden="true" />Betrieb</p>
             <h2 id="reference-env" className="mt-2 font-semibold">Variablen</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <div>

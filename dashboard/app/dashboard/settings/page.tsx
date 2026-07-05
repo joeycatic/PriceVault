@@ -1,7 +1,6 @@
-import Link from 'next/link'
 import { Bell, Building2, CreditCard, Database, Plug, Settings2, Shield, Users } from 'lucide-react'
 
-import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
+import { FeatureLinkCard, MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 
 export default async function SettingsPage() {
@@ -30,11 +29,7 @@ export default async function SettingsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {sections.map(({ title, copy, href, icon: Icon }) => (
-          <Link key={title} href={href} className="panel group block min-h-36 p-5 transition hover:bg-vault-800">
-            <Icon className="h-5 w-5 text-vault-500 group-hover:text-vault-100" aria-hidden="true" />
-            <h2 className="mt-4 text-base font-semibold">{title}</h2>
-            <p className="mt-2 text-sm leading-6 text-vault-500">{copy}</p>
-          </Link>
+          <FeatureLinkCard key={title} href={href} icon={Icon} title={title} description={copy} />
         ))}
       </div>
     </>

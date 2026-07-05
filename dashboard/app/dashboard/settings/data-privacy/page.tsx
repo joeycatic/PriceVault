@@ -11,6 +11,7 @@ type PrivacyRequest = {
   status: string
   requested_at: string
   completed_at?: string | null
+  scheduled_for?: string | null
   export_metadata?: Record<string, unknown>
 }
 
@@ -37,6 +38,15 @@ async function requestDeletion(formData: FormData) {
       confirmation_text: String(formData.get('confirmation_text') ?? ''),
     }),
   })
+  if (!response.ok) return
+  revalidatePath('/dashboard/settings/data-privacy')
+}
+
+async function cancelDeletion(requestId: string) {
+  'use server'
+  const tenant = await currentTenant()
+  if (!tenant) return
+  const response = await backendFetch(`/privacy/requests/${requestId}/cancel`, tenant.id, { method: 'POST' })
   if (!response.ok) return
   revalidatePath('/dashboard/settings/data-privacy')
 }
@@ -82,7 +92,7 @@ export default async function DataPrivacySettingsPage() {
               <p className="eyebrow">Löschung</p>
               <h2 className="mt-2 text-xl font-semibold">Account- oder Mandantenlöschung anfragen</h2>
               <p className="mt-2 text-sm leading-6 text-vault-300">
-                PriceVault löscht Produktionsdaten nicht automatisch. Die Anfrage wird mit Audit-Ereignis gespeichert und anschließend manuell geprüft.
+                Nach der Bestätigung beginnt eine 14-tägige Widerrufsfrist. Bis zum angezeigten Löschtermin kannst du die Anfrage stornieren. Rechnungs- und Buchhaltungsbelege bleiben im gesetzlich erforderlichen Umfang getrennt erhalten; Backups laufen nach ihrer Aufbewahrungsfrist aus.
               </p>
               <form action={requestDeletion} className="mt-5 space-y-3">
                 <label className="block">
@@ -111,9 +121,17 @@ export default async function DataPrivacySettingsPage() {
                 {requests.map((request) => (
                   <article key={request.id} className="p-5 text-sm">
                     <div className="flex items-center justify-between gap-3">
-                      <span>{request.request_type === 'export' ? 'Export' : 'Löschung'} · {request.status}</span>
+                      <span>{request.request_type === 'export' ? 'Export' : 'Löschung'} · {{ requested: 'angefragt', cooling_off: 'Widerrufsfrist', scheduled: 'eingeplant', processing: 'wird ausgeführt', processor_cleanup: 'Auftragsverarbeiter', completed: 'abgeschlossen', canceled: 'storniert', failed: 'fehlgeschlagen', exception: 'manuelle Prüfung' }[request.status] ?? request.status}</span>
                       <span className="font-mono text-xs text-vault-500">{formatRelativeTime(request.requested_at)}</span>
                     </div>
+                    {request.request_type === 'deletion' && request.scheduled_for && ['cooling_off', 'scheduled'].includes(request.status) && (
+                      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-amber-900">
+                        <span>Löschung geplant: {new Date(request.scheduled_for).toLocaleDateString('de-DE')}</span>
+                        <form action={cancelDeletion.bind(null, request.id)}>
+                          <button className="font-semibold underline">Stornieren</button>
+                        </form>
+                      </div>
+                    )}
                   </article>
                 ))}
                 {!requests.length && <p className="p-5 text-sm text-vault-400">Noch keine Datenschutzanfragen.</p>}

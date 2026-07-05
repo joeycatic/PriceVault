@@ -17,7 +17,7 @@ export function ReportScheduleForm({
   const [state, formAction, pending] = useActionState(action, initialState)
 
   return (
-    <form action={formAction} className="mt-4 space-y-3 border-b border-vault-700 pb-5">
+    <form action={formAction} className="space-y-4 border-b border-violet-100 pb-5">
       <label className="block">
         <span className="field-label">Name</span>
         <input className="field" name="name" placeholder="Wöchentlicher Preisreport" required />
@@ -44,7 +44,7 @@ export function ReportScheduleForm({
           {state.message}
         </p>
       )}
-      <button className="button-primary w-full" disabled={pending}>
+      <button className="button-primary w-full bg-violet-950 hover:bg-violet-900" disabled={pending}>
         {pending ? 'Wird gespeichert ...' : 'Zeitplan speichern'}
       </button>
     </form>

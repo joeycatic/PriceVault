@@ -3,6 +3,14 @@
 import { revalidatePath } from 'next/cache'
 
 import { backendFetch } from '@/lib/backend'
+import {
+  COMPANY_SIZE_OPTIONS,
+  COUNTRY_OPTIONS,
+  INDUSTRY_OPTIONS,
+  REVENUE_BAND_OPTIONS,
+  SHOP_PLATFORM_OPTIONS,
+  optionValues,
+} from '@/lib/company-profile'
 import { planLimit } from '@/lib/plan-gates'
 import { parsePriceInput } from '@/lib/priceInput'
 import { createClient } from '@/lib/supabase/server'
@@ -16,6 +24,21 @@ export type OnboardingResult = {
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) ?? '').trim()
+}
+
+function nullableText(formData: FormData, key: string) {
+  return text(formData, key) || null
+}
+
+function requiredOption(formData: FormData, key: string, allowed: Set<string>) {
+  const value = text(formData, key)
+  return allowed.has(value) ? value : null
+}
+
+function optionalOption(formData: FormData, key: string, allowed: Set<string>) {
+  const value = text(formData, key)
+  if (!value) return null
+  return allowed.has(value) ? value : undefined
 }
 
 function validHttpUrl(value: string) {
@@ -46,8 +69,27 @@ async function authenticatedTenant() {
 export async function saveShop(formData: FormData): Promise<OnboardingResult> {
   const shopName = text(formData, 'shop_name')
   const shopUrl = text(formData, 'shop_url')
+  const industry = requiredOption(formData, 'industry', optionValues(INDUSTRY_OPTIONS))
+  const companySize = requiredOption(formData, 'company_size', optionValues(COMPANY_SIZE_OPTIONS))
+  const shopPlatform = optionalOption(formData, 'shop_platform', optionValues(SHOP_PLATFORM_OPTIONS))
+  const headquartersCountry = requiredOption(formData, 'headquarters_country', optionValues(COUNTRY_OPTIONS))
+  const annualRevenueBand = optionalOption(formData, 'annual_revenue_band', optionValues(REVENUE_BAND_OPTIONS))
   if (!shopName || !validHttpUrl(shopUrl)) {
     return { ok: false, message: 'Bitte gib einen Shopnamen und eine gültige URL an.' }
+  }
+  if (!industry || !companySize || shopPlatform === undefined || !headquartersCountry || annualRevenueBand === undefined) {
+    return { ok: false, message: 'Bitte wähle Branche, Unternehmensgröße und Hauptmarkt aus.' }
+  }
+  const tenantValues = {
+    shop_name: shopName,
+    shop_url: shopUrl,
+    company_legal_name: nullableText(formData, 'company_legal_name'),
+    company_size: companySize,
+    industry,
+    shop_platform: shopPlatform,
+    headquarters_country: headquartersCountry,
+    headquarters_city: nullableText(formData, 'headquarters_city'),
+    annual_revenue_band: annualRevenueBand,
   }
 
   const { supabase, user, tenant } = await authenticatedTenant()
@@ -60,13 +102,13 @@ export async function saveShop(formData: FormData): Promise<OnboardingResult> {
     }
     const { error } = await supabase
       .from('tenants')
-      .update({ shop_name: shopName, shop_url: shopUrl })
+      .update(tenantValues)
       .eq('id', tenant.id)
     if (error) return { ok: false, message: 'Der Shop konnte nicht gespeichert werden.' }
   } else {
     const { data, error } = await supabase
       .from('tenants')
-      .insert({ user_id: user.id, shop_name: shopName, shop_url: shopUrl })
+      .insert({ user_id: user.id, ...tenantValues })
       .select('id')
       .single()
     if (error || !data) return { ok: false, message: 'Der Shop konnte nicht gespeichert werden.' }
@@ -173,7 +215,7 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
   if (!product) return { ok: false, message: 'Das ausgewählte Produkt wurde nicht gefunden.' }
   const { data: variant } = await supabase
     .from('product_variants')
-    .select('id')
+    .select('id,name,currency')
     .eq('tenant_id', tenant.id)
     .eq('product_id', productId)
     .eq('is_default', true)
@@ -203,25 +245,24 @@ export async function saveFirstSource(formData: FormData): Promise<OnboardingRes
     createdCompetitorId = competitor.id
   }
 
-  const { data: mapping, error: mappingError } = await supabase.from('competitor_products').upsert(
-    {
-      tenant_id: tenant.id,
-      product_id: productId,
+  const mappingResponse = await backendFetch(`/products/${productId}/mappings`, tenant.id, {
+    method: 'POST',
+    body: JSON.stringify({
       variant_id: variant.id,
       competitor_id: competitorId,
       competitor_url: productUrl,
       selector_price: selectorPrice || null,
-      active: true,
-    },
-    { onConflict: 'product_id,competitor_id' },
-  )
-    .select('id')
-    .single()
-  if (mappingError) {
+      expected_currency: variant.currency,
+      expected_variant: variant.name,
+      customer_authorized: formData.get('customer_authorized') === 'on',
+    }),
+  })
+  const mapping = await mappingResponse.json()
+  if (!mappingResponse.ok) {
     if (createdCompetitorId) {
       await supabase.from('competitors').delete().eq('tenant_id', tenant.id).eq('id', createdCompetitorId)
     }
-    return { ok: false, message: 'Die Preisquelle konnte nicht verbunden werden.' }
+    return { ok: false, message: mapping.detail ?? 'Die Preisquelle konnte nicht verbunden werden.' }
   }
 
   if (mapping?.id) {

@@ -1,8 +1,8 @@
-import { Activity, BookOpen, CreditCard, LifeBuoy, ShieldCheck } from 'lucide-react'
+import { Activity, BookOpen, CreditCard, LifeBuoy, Send, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 
-import { PageHeader } from '@/components/ui/MerchantUI'
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 import { formatRelativeTime } from '@/lib/utils'
@@ -71,9 +71,18 @@ export default async function SupportPage() {
         description="Direkter Kontakt für technische Fragen, Abrechnung und Kontozugriff."
       />
 
+      <div className="mb-6">
+        <MetricGrid items={[
+          { label: 'Offene Anfragen', value: (tickets ?? []).filter((ticket) => ticket.status === 'open').length, tone: (tickets ?? []).some((ticket) => ticket.status === 'open') ? 'warning' : 'success' },
+          { label: 'In Bearbeitung', value: (tickets ?? []).filter((ticket) => ticket.status === 'in_progress').length },
+          { label: 'Gelöst', value: (tickets ?? []).filter((ticket) => ticket.status === 'resolved').length, tone: 'success' },
+          { label: 'Mandant', value: tenantName },
+        ]} />
+      </div>
+
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="panel overflow-hidden" aria-labelledby="support-topics">
-          <div className="border-b border-vault-700 px-5 py-4">
+          <div className="border-b border-vault-700 bg-white px-5 py-4">
             <h2 id="support-topics" className="text-base font-semibold">Worum geht es?</h2>
             <p className="mt-1 text-sm text-vault-500">Wähle den passenden Bereich für deine Anfrage.</p>
           </div>
@@ -82,7 +91,7 @@ export default async function SupportPage() {
               <a
                 key={title}
                 href="#support-form"
-                className="group grid gap-4 px-5 py-5 transition hover:bg-vault-800 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center"
+                className="group grid gap-4 px-5 py-5 transition hover:bg-vault-950 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center"
               >
                 <span className="grid h-10 w-10 place-items-center rounded-lg border border-vault-700 bg-white text-vault-400 group-hover:text-vault-100">
                   <Icon className="h-5 w-5" aria-hidden="true" />
@@ -123,13 +132,20 @@ export default async function SupportPage() {
           </Link>
         </aside>
       </div>
-      <section className="panel mt-6 p-5 sm:p-6" aria-labelledby="new-ticket">
-        <p className="eyebrow">Neue Anfrage</p>
-        <h2 id="new-ticket" className="mb-5 mt-2 text-xl font-semibold">Support kontaktieren</h2>
+      <section className="panel mt-6 overflow-hidden" aria-labelledby="new-ticket">
+        <div className="border-b border-vault-700 bg-vault-100 p-5 text-white sm:p-6">
+          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+            <Send className="h-4 w-4" aria-hidden="true" />
+            Neue Anfrage
+          </p>
+          <h2 id="new-ticket" className="mt-2 text-xl font-bold">Support kontaktieren</h2>
+        </div>
+        <div className="p-5 sm:p-6">
         <SupportForm action={createTicket} />
+        </div>
       </section>
       <section className="panel mt-6 overflow-hidden" aria-labelledby="ticket-history">
-        <div className="border-b border-vault-700 px-5 py-4"><h2 id="ticket-history" className="font-semibold">Meine Anfragen</h2></div>
+        <div className="border-b border-vault-700 bg-white px-5 py-4"><h2 id="ticket-history" className="font-semibold">Meine Anfragen</h2></div>
         <div className="divide-y divide-vault-700/70">
           {(tickets ?? []).map((ticket) => (
             <article key={ticket.id} className="flex flex-col gap-2 p-5 text-sm sm:flex-row sm:items-center sm:justify-between">

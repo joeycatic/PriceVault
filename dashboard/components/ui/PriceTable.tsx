@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 
 import type { LatestPrice } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
@@ -133,7 +134,13 @@ export function PriceTable({ rows }: { rows: LatestPrice[] }) {
                             {isOpen ? '−' : '+'}
                           </span>
                           <span>
-                            {row.product_name}
+                            <Link
+                              href={`/dashboard/products/${productId}`}
+                              onClick={(event) => event.stopPropagation()}
+                              className="underline decoration-transparent underline-offset-4 hover:decoration-vault-lime"
+                            >
+                              {row.product_name}
+                            </Link>
                             <span className="mt-1 block font-mono text-[10px] font-normal uppercase text-vault-500">
                               {entries.length} {entries.length === 1 ? 'Quelle' : 'Quellen'}
                             </span>

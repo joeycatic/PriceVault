@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, Search, Settings, UserRound } from 'lucide-react'
+import { BookOpen, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -8,12 +8,18 @@ import { cn } from '@/lib/utils'
 
 const utilityLinks = [
   { href: '/dashboard/wiki', label: 'Referenz', icon: BookOpen },
-  { href: '/dashboard/account', label: 'Mein Konto', icon: UserRound },
   { href: '/dashboard/settings', label: 'Einstellungen', icon: Settings },
 ]
 
-export function DashboardTopbar() {
+export function DashboardTopbar({
+  accountInitials,
+  accountLabel,
+}: {
+  accountInitials: string
+  accountLabel: string
+}) {
   const pathname = usePathname()
+  const accountActive = pathname === '/dashboard/account' || pathname.startsWith('/dashboard/account/')
 
   return (
     <div className="sticky top-0 z-20 mb-6 hidden min-h-14 items-center justify-between border-b border-vault-700 bg-white px-8 lg:ml-60 lg:flex xl:px-10">
@@ -29,6 +35,7 @@ export function DashboardTopbar() {
             <Link
               key={link.href}
               href={link.href}
+              prefetch={false}
               className={cn(
                 'flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-semibold transition',
                 active ? 'bg-vault-800 text-vault-100' : 'text-vault-300 hover:bg-vault-800 hover:text-vault-100',
@@ -39,6 +46,20 @@ export function DashboardTopbar() {
             </Link>
           )
         })}
+        <Link
+          href="/dashboard/account"
+          prefetch={false}
+          className={cn(
+            'ml-1 grid h-9 w-9 place-items-center rounded-full border text-xs font-bold tracking-[-0.02em] transition',
+            accountActive
+              ? 'border-vault-100 bg-vault-100 text-white shadow-sm'
+              : 'border-vault-700 bg-vault-800 text-vault-100 hover:border-vault-500 hover:bg-white',
+          )}
+          aria-label={`Mein Konto öffnen: ${accountLabel}`}
+          title={`Mein Konto · ${accountLabel}`}
+        >
+          {accountInitials}
+        </Link>
       </nav>
     </div>
   )

@@ -1,13 +1,31 @@
 import { revalidatePath } from 'next/cache'
+import {
+  AlertTriangle,
+  Bot,
+  Boxes,
+  CheckCircle2,
+  Clock3,
+  FileSpreadsheet,
+  Link2,
+  ListChecks,
+  PackagePlus,
+  Radar,
+  Search,
+  Tags,
+  Store,
+  Workflow,
+  type LucideIcon,
+} from 'lucide-react'
 import Link from 'next/link'
 
 import { ManualScrapeButton } from '@/components/ui/ManualScrapeButton'
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { MutationButton } from '@/components/ui/MutationButton'
-import { MappingForm, MatchSuggestionForm, ProductForm, ProductImportForm, VariantForm } from '@/components/ui/ProductForms'
+import { MappingForm, MatchSuggestionForm, ProductForm, ProductImportForm, PublicCatalogImportForm, VariantForm, type CatalogCandidate } from '@/components/ui/ProductForms'
 import { runManualScrape } from '@/app/dashboard/scrape-actions'
 import { ExportButton } from '@/app/dashboard/products/[id]/ExportButton'
 import { backendFetch, currentTenant } from '@/lib/backend'
+import { catalogDuplicateReason, createDuplicateIndex } from '@/lib/catalog-duplicates'
 import { parsePriceInput } from '@/lib/priceInput'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
@@ -52,6 +70,57 @@ function parseProductImport(input: string) {
     })
 }
 
+function ProductsPanelTitle({
+  eyebrow,
+  title,
+  description,
+  icon: Icon,
+  titleId,
+}: {
+  eyebrow: string
+  title: string
+  description?: string
+  icon: LucideIcon
+  titleId?: string
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-vault-700 bg-vault-800 text-vault-100 shadow-sm">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h2 id={titleId} className="mt-1 text-xl font-semibold tracking-[-0.01em] text-vault-100">{title}</h2>
+        {description && <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">{description}</p>}
+      </div>
+    </div>
+  )
+}
+
+function MatchingMethodHeader({
+  icon: Icon,
+  title,
+  description,
+  accent,
+}: {
+  icon: LucideIcon
+  title: string
+  description: string
+  accent: string
+}) {
+  return (
+    <div className="mb-5 flex items-start gap-3">
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${accent}`}>
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div>
+        <h3 className="font-semibold text-vault-100">{title}</h3>
+        <p className="mt-1 text-xs leading-5 text-vault-500">{description}</p>
+      </div>
+    </div>
+  )
+}
+
 export default async function ProductsPage() {
   const supabase = await createClient()
   const tenant = await currentTenant()
@@ -86,6 +155,7 @@ export default async function ProductsPage() {
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
   const productLimit = planLimit(tenant?.plan).products
   const unhealthyMappings = mappings.filter((mapping) => ['degraded', 'broken'].includes(mapping.health_status))
+  const healthyMappings = mappings.filter((mapping) => mapping.health_status === 'healthy')
 
   async function createProduct(formData: FormData) {
     'use server'
@@ -184,6 +254,126 @@ export default async function ProductsPage() {
     return { ok: true, message: `${rows.length} Produkt(e) importiert.` }
   }
 
+  async function discoverCatalog(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.', products: [] }
+    const maxProducts = Number(formData.get('max_products') ?? 50)
+    if (!Number.isInteger(maxProducts) || maxProducts < 1 || maxProducts > 250) {
+      return { ok: false, message: 'Wähle einen Bereich zwischen 1 und 250 Produkten.', products: [] }
+    }
+    try {
+      const response = await backendFetch('/products/discover', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({
+          base_url: String(formData.get('base_url') ?? '').trim(),
+          max_products: maxProducts,
+        }),
+        cache: 'no-store',
+      })
+      const payload = await response.json()
+      if (!response.ok) return { ok: false, message: payload.detail ?? 'Der Shop konnte nicht gelesen werden.', products: [] }
+      const found = (payload.products ?? []) as CatalogCandidate[]
+      const client = await createClient()
+      const [existingProductResult, existingVariantResult] = await Promise.all([
+        client.from('products').select('name,our_sku').eq('tenant_id', tenant.id).eq('active', true),
+        client.from('product_variants').select('sku,gtin,external_refs').eq('tenant_id', tenant.id).eq('active', true),
+      ])
+      if (existingProductResult.error || existingVariantResult.error) {
+        return { ok: false, message: 'Die Duplikatprüfung konnte nicht ausgeführt werden.', products: [] }
+      }
+      const duplicateIndex = createDuplicateIndex(
+        (existingProductResult.data ?? []) as Array<{ name: string; our_sku: string | null }>,
+        (existingVariantResult.data ?? []) as Array<{ sku: string | null; gtin: string | null; external_refs: Record<string, unknown> | null }>,
+      )
+      const marked = found.map((item) => {
+        const reason = catalogDuplicateReason(item, duplicateIndex)
+        return { ...item, duplicate: Boolean(reason), duplicate_reason: reason }
+      })
+      const duplicateCount = marked.filter((item) => item.duplicate).length
+      return {
+        ok: true,
+        message: marked.length ? `${marked.length} Produkt(e) erkannt.` : 'In diesem Shop wurden keine strukturierten Produktseiten erkannt.',
+        products: marked,
+        duplicateCount,
+      }
+    } catch {
+      return { ok: false, message: 'Der Katalogdienst ist nicht erreichbar.', products: [] }
+    }
+  }
+
+  async function importDiscoveredProducts(formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    let candidates: CatalogCandidate[]
+    try {
+      const parsed = JSON.parse(String(formData.get('products') ?? '[]'))
+      candidates = Array.isArray(parsed) ? parsed : []
+    } catch {
+      return { ok: false, message: 'Die Produktauswahl ist ungültig.' }
+    }
+    const unique = new Map<string, CatalogCandidate>()
+    for (const item of candidates.slice(0, 250)) {
+      const name = typeof item?.name === 'string' ? item.name.trim() : ''
+      const url = typeof item?.url === 'string' ? item.url : ''
+      if (name && url) unique.set(url, { ...item, name, url })
+    }
+    const selected = Array.from(unique.values())
+    if (!selected.length) return { ok: false, message: 'Wähle mindestens ein Produkt aus.' }
+
+    const client = await createClient()
+    const [existingProductResult, existingVariantResult] = await Promise.all([
+      client.from('products').select('name,our_sku').eq('tenant_id', tenant.id).eq('active', true),
+      client.from('product_variants').select('sku,gtin,external_refs').eq('tenant_id', tenant.id).eq('active', true),
+    ])
+    if (existingProductResult.error || existingVariantResult.error) {
+      return { ok: false, message: 'Die Duplikatprüfung konnte nicht ausgeführt werden.' }
+    }
+    const duplicateIndex = createDuplicateIndex(
+      (existingProductResult.data ?? []) as Array<{ name: string; our_sku: string | null }>,
+      (existingVariantResult.data ?? []) as Array<{ sku: string | null; gtin: string | null; external_refs: Record<string, unknown> | null }>,
+    )
+    const importable = selected.filter((item) => !catalogDuplicateReason(item, duplicateIndex))
+    const skippedDuplicates = selected.length - importable.length
+    if (!importable.length) {
+      return { ok: true, message: `Keine Produkte importiert: ${skippedDuplicates} bereits vorhanden.` }
+    }
+    const limit = planLimit(tenant.plan).products
+    if (limit !== null) {
+      const { count, error: countError } = await client.from('products').select('id', { count: 'exact', head: true }).eq('tenant_id', tenant.id).eq('active', true)
+      if (countError) return { ok: false, message: 'Das Produktlimit konnte nicht geprüft werden.' }
+      if ((count ?? 0) + importable.length > limit) {
+        return { ok: false, message: `Dein Plan erlaubt maximal ${limit} aktive Produkte. Du kannst noch ${Math.max(0, limit - (count ?? 0))} importieren.` }
+      }
+    }
+    const rows = importable.map((item) => ({
+      tenant_id: tenant.id,
+      name: item.name,
+      our_sku: item.sku || null,
+      our_price: item.price !== null && Number.isFinite(Number(item.price)) ? Number(item.price) : null,
+      our_currency: /^[A-Z]{3}$/.test(item.currency) ? item.currency : 'EUR',
+    }))
+    const { data: inserted, error } = await client.from('products').insert(rows).select('id,our_sku,our_price,our_currency')
+    if (error || !inserted) return { ok: false, message: 'Die ausgewählten Produkte konnten nicht importiert werden. Prüfe doppelte SKUs.' }
+    const { error: variantError } = await client.from('product_variants').insert(inserted.map((product, index) => ({
+      tenant_id: tenant.id,
+      product_id: product.id,
+      name: 'Standard',
+      sku: product.our_sku,
+      gtin: importable[index]?.gtin || null,
+      our_price: product.our_price,
+      currency: product.our_currency,
+      is_default: true,
+      external_refs: { catalog_url: importable[index]?.url, discovery_source: importable[index]?.source },
+    })))
+    if (variantError) {
+      await client.from('products').delete().eq('tenant_id', tenant.id).in('id', inserted.map((product) => product.id))
+      return { ok: false, message: 'Der Import wurde wegen ungültiger SKU- oder GTIN-Daten zurückgesetzt.' }
+    }
+    revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: `${inserted.length} Produkt(e) importiert${skippedDuplicates ? ` · ${skippedDuplicates} Duplikat(e) übersprungen` : ''}.` }
+  }
+
   async function createVariant(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
@@ -230,26 +420,27 @@ export default async function ProductsPage() {
     }
     const { data: variant } = await client
       .from('product_variants')
-      .select('id')
+      .select('id,name,currency')
       .eq('tenant_id', tenant.id)
       .eq('product_id', productId)
       .eq('id', variantId)
       .maybeSingle()
     if (!variant) return { ok: false, message: 'Die Variante gehört nicht zum ausgewählten Produkt.' }
-    const { data, error } = await client.from('competitor_products').insert({
-      tenant_id: tenant.id,
-      product_id: productId,
-      variant_id: variantId,
-      competitor_id: competitorId,
-      competitor_url: competitorUrl,
-      competitor_sku: String(formData.get('competitor_sku') || '') || null,
-      selector_price: String(formData.get('selector_price') || '') || null,
+    const response = await backendFetch(`/products/${productId}/mappings`, tenant.id, {
+      method: 'POST',
+      body: JSON.stringify({
+        variant_id: variantId,
+        competitor_id: competitorId,
+        competitor_url: competitorUrl,
+        competitor_sku: String(formData.get('competitor_sku') || '') || null,
+        selector_price: String(formData.get('selector_price') || '') || null,
+        expected_currency: variant.currency,
+        expected_variant: variant.name,
+        customer_authorized: formData.get('customer_authorized') === 'on',
+      }),
     })
-      .select('id')
-      .single()
-    if (error) {
-      return { ok: false, message: 'Die Zuordnung konnte nicht gespeichert werden. Prüfe, ob sie bereits existiert.' }
-    }
+    const data = await response.json()
+    if (!response.ok) return { ok: false, message: data.detail ?? 'Die Zuordnung konnte nicht gespeichert werden.' }
     if (data?.id) {
       try {
         await backendFetch('/scrape/run', tenant.id, {
@@ -285,8 +476,11 @@ export default async function ProductsPage() {
         ok: true,
         message: payload.length ? `${payload.length} Vorschlag/Vorschläge gefunden.` : 'Keine passenden Produktseiten gefunden.',
       }
-    } catch {
-      return { ok: false, message: 'Der Matcher-Dienst ist nicht erreichbar.' }
+    } catch (error) {
+      console.error('[products/matcher] suggestion generation failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return { ok: false, message: error instanceof Error && error.name === 'TimeoutError' ? 'Die Produktsuche hat das Zeitlimit überschritten.' : 'Die Produktsuche konnte nicht abgeschlossen werden.' }
     }
   }
 
@@ -303,8 +497,12 @@ export default async function ProductsPage() {
       revalidatePath('/dashboard/products')
       revalidatePath('/dashboard')
       return { ok: true, message: decision === 'approve' ? 'Vorschlag freigegeben.' : 'Vorschlag abgelehnt.' }
-    } catch {
-      return { ok: false, message: 'Der Matcher-Dienst ist nicht erreichbar.' }
+    } catch (error) {
+      console.error('[products/matcher] suggestion review failed', {
+        suggestionId: id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return { ok: false, message: 'Der Vorschlag konnte nicht verarbeitet werden.' }
     }
   }
 
@@ -387,91 +585,229 @@ export default async function ProductsPage() {
         <div className="panel p-6 text-sm text-amber-800">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
         <div className="space-y-6">
-          <section className="panel p-5 sm:p-6" aria-labelledby="scrape-clarity">
-            <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-              <div>
-                <p className="eyebrow">Preisabruf</p>
-                <h2 id="scrape-clarity" className="mt-2 text-xl font-semibold">Wann werden Preise gescraped?</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">
-                  PriceVault ruft jede aktive Preisquelle nach ihrem hinterlegten Intervall ab. Der nächste Lauf wird aus dem letzten erfolgreichen Abruf berechnet; einen manuellen Abruf kannst du jederzeit starten.
-                </p>
+          <section className="panel overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(32,132,90,0.10),transparent_34%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,#f7f7f7_100%)]" aria-labelledby="product-overview">
+            <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="p-5 sm:p-6">
+                <ProductsPanelTitle
+                  eyebrow="Arbeitsbereich"
+                  title="Produkte sauber erfassen, Varianten pflegen und Preisquellen verbinden"
+                  description="Starte mit deinem Katalog, ergänze Varianten und verknüpfe anschließend jede Variante mit einer eindeutigen Mitbewerber-URL oder einem geprüften Vorschlag."
+                  icon={Boxes}
+                  titleId="product-overview"
+                />
+                <div className="mt-6 grid gap-3 sm:grid-cols-4">
+                  {[
+                    { label: 'Produkte', value: products.length, icon: Tags, tone: 'text-vault-100 bg-white' },
+                    { label: 'Varianten', value: variants.length, icon: Boxes, tone: 'text-vault-100 bg-white' },
+                    { label: 'Preisquellen', value: mappings.length, icon: Link2, tone: 'text-merchant-success bg-emerald-50' },
+                    { label: 'Offene Vorschläge', value: suggestions.length, icon: ListChecks, tone: suggestions.length ? 'text-amber-700 bg-amber-50' : 'text-vault-500 bg-white' },
+                  ].map((item, index) => {
+                    const Icon = item.icon
+                    return (
+                      <div key={item.label} className="product-tab-reveal rounded-xl border border-vault-700 bg-white/85 p-4 shadow-sm" style={{ animationDelay: `${index * 70}ms` }}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold text-vault-500">{item.label}</span>
+                          <span className={`grid h-8 w-8 place-items-center rounded-lg ${item.tone}`}>
+                            <Icon className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                        </div>
+                        <p className="mt-4 font-mono text-2xl font-semibold text-vault-100">{item.value}</p>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              <ManualScrapeButton action={runManualScrape} disabled={!mappings.length} />
+              <div className="border-t border-vault-700 bg-white/70 p-5 sm:p-6 lg:border-l lg:border-t-0">
+                <div className="flex h-full flex-col justify-between gap-5">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-vault-100">
+                      <Clock3 className="h-4 w-4 text-merchant-success" aria-hidden="true" />
+                      Preisabruf
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-vault-300">
+                      Jede aktive Preisquelle läuft nach ihrem Mitbewerber-Intervall. Manuelle Abrufe starten sofort und ändern nicht die Zuordnung.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{healthyMappings.length} gesund</span>
+                      {unhealthyMappings.length > 0 && (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">{unhealthyMappings.length} prüfen</span>
+                      )}
+                    </div>
+                  </div>
+                  <ManualScrapeButton action={runManualScrape} disabled={!mappings.length} />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-4" aria-label="Produkt-Workflow">
+            {[
+              { step: '01', title: 'Katalog importieren', description: 'Shop scannen oder CSV nutzen', icon: Store },
+              { step: '02', title: 'Produkte prüfen', description: 'SKU und Preise ergänzen', icon: CheckCircle2 },
+              { step: '03', title: 'Varianten pflegen', description: 'GTIN/EAN verbessert Treffer', icon: PackagePlus },
+              { step: '04', title: 'Quellen matchen', description: 'URL oder Vorschlag freigeben', icon: Radar },
+            ].map((item, index) => {
+              const Icon = item.icon
+              return (
+                <article key={item.step} className="product-tab-reveal group rounded-xl border border-vault-700 bg-white p-4 shadow-panel transition hover:-translate-y-0.5 hover:border-vault-500 hover:shadow-md" style={{ animationDelay: `${index * 80}ms` }}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-semibold text-vault-500">{item.step}</span>
+                    <span className="grid h-9 w-9 place-items-center rounded-lg bg-vault-800 text-vault-300 transition group-hover:bg-emerald-50 group-hover:text-merchant-success">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                  </div>
+                  <h2 className="mt-4 text-sm font-semibold text-vault-100">{item.title}</h2>
+                  <p className="mt-1 text-xs leading-5 text-vault-500">{item.description}</p>
+                </article>
+              )
+            })}
+          </section>
+
+          <section className="panel p-5 sm:p-6" aria-labelledby="catalog-discovery">
+            <ProductsPanelTitle
+              eyebrow="Importoption 01"
+              title="Shop-Katalog automatisch erkennen"
+              description="Füge nur die Basis-URL deines Shops ein. PriceVault erkennt öffentliche Produktseiten; du bestimmst den Suchbereich und bestätigst die Produkte vor dem Import."
+              icon={Search}
+              titleId="catalog-discovery"
+            />
+            <div className="mt-6">
+              <PublicCatalogImportForm discoverAction={discoverCatalog} importAction={importDiscoveredProducts} />
             </div>
           </section>
 
           <div className="grid items-start gap-6 xl:grid-cols-3">
-            <section className="panel p-5 sm:p-6" aria-labelledby="new-product">
-              <p className="eyebrow">Importoption 01</p>
-              <h2 id="new-product" className="mb-5 mt-2 text-xl font-semibold">Ein Produkt manuell anlegen</h2>
-              <ProductForm action={createProduct} />
+            <section className="panel p-5 transition hover:-translate-y-0.5 hover:shadow-md sm:p-6" aria-labelledby="new-product">
+              <ProductsPanelTitle
+                eyebrow="Importoption 02"
+                title="Ein Produkt manuell anlegen"
+                icon={PackagePlus}
+                titleId="new-product"
+              />
+              <div className="mt-5">
+                <ProductForm action={createProduct} />
+              </div>
             </section>
 
-            <section className="panel p-5 sm:p-6" aria-labelledby="bulk-import">
-              <p className="eyebrow">Importoption 02 / 03</p>
-              <h2 id="bulk-import" className="mb-5 mt-2 text-xl font-semibold">Produkte per CSV importieren</h2>
-              <ProductImportForm action={importProducts} />
+            <section className="panel p-5 transition hover:-translate-y-0.5 hover:shadow-md sm:p-6" aria-labelledby="bulk-import">
+              <ProductsPanelTitle
+                eyebrow="Importoption 03 / 04"
+                title="Produkte per CSV importieren"
+                icon={FileSpreadsheet}
+                titleId="bulk-import"
+              />
+              <div className="mt-5">
+                <ProductImportForm action={importProducts} />
+              </div>
             </section>
-            <section className="panel p-5 sm:p-6" aria-labelledby="new-variant">
-              <p className="eyebrow">Varianten</p>
-              <h2 id="new-variant" className="mb-5 mt-2 text-xl font-semibold">Variante ergänzen</h2>
-              <VariantForm action={createVariant} products={products} />
+            <section className="panel p-5 transition hover:-translate-y-0.5 hover:shadow-md sm:p-6" aria-labelledby="new-variant">
+              <ProductsPanelTitle
+                eyebrow="Varianten"
+                title="Variante ergänzen"
+                icon={Boxes}
+                titleId="new-variant"
+              />
+              <div className="mt-5">
+                <VariantForm action={createVariant} products={products} />
+              </div>
             </section>
           </div>
 
           {productLimit !== null && (
-            <p className="text-sm text-vault-400">
+            <p className="rounded-xl border border-vault-700 bg-white px-4 py-3 text-sm text-vault-400">
               Dein Plan nutzt {products.length} von {productLimit} aktiven Produkten.
             </p>
           )}
 
           {unhealthyMappings.length > 0 && (
-            <section className="panel border-l-4 border-l-amber-400 p-5" aria-labelledby="source-health">
-              <h2 id="source-health" className="text-base font-semibold">Preisquellen benötigen Aufmerksamkeit</h2>
-              <p className="mt-2 text-sm leading-6 text-vault-300">
-                {unhealthyMappings.length} Quelle(n) sind degradiert oder defekt. Repariere URL oder Preis-Selektor und starte danach einen Testabruf.
-              </p>
+            <section className="panel border-l-4 border-l-amber-400 bg-amber-50/40 p-5" aria-labelledby="source-health">
+              <div className="flex gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-amber-200 bg-white text-amber-700">
+                  <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 id="source-health" className="text-base font-semibold">Preisquellen benötigen Aufmerksamkeit</h2>
+                  <p className="mt-2 text-sm leading-6 text-vault-300">
+                    {unhealthyMappings.length} Quelle(n) sind degradiert oder defekt. Repariere URL oder Preis-Selektor und starte danach einen Testabruf.
+                  </p>
+                </div>
+              </div>
             </section>
           )}
 
           <section className="panel overflow-hidden" aria-labelledby="matching-workspace">
-            <div className="border-b border-vault-700 px-5 py-4 sm:px-6">
-              <p className="eyebrow">Produkt-Matching</p>
-              <h2 id="matching-workspace" className="mt-2 text-xl font-semibold">Produkte zuordnen</h2>
+            <div className="border-b border-vault-700 bg-[linear-gradient(90deg,#ffffff_0%,#f7f7f7_100%)] px-5 py-5 sm:px-6">
+              <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+                <ProductsPanelTitle
+                  eyebrow="Produkt-Matching"
+                  title="Produkte zuordnen"
+                  description="Ordne jede interne Variante einer konkreten Mitbewerber-Produktseite zu. Manuelle URLs sind sofort nutzbar; automatische Vorschläge bleiben bis zur Freigabe in der Warteschlange."
+                  icon={Workflow}
+                  titleId="matching-workspace"
+                />
+                <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-64">
+                  <div className="rounded-xl border border-vault-700 bg-white px-3 py-2">
+                    <span className="block text-vault-500">Aktive Zuordnungen</span>
+                    <span className="mt-1 block font-mono text-lg font-semibold text-vault-100">{mappings.length}</span>
+                  </div>
+                  <div className="rounded-xl border border-vault-700 bg-white px-3 py-2">
+                    <span className="block text-vault-500">Zu prüfen</span>
+                    <span className="mt-1 block font-mono text-lg font-semibold text-amber-700">{suggestions.length}</span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="grid items-start gap-0 divide-y divide-vault-700 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-              <div className="p-5 sm:p-6">
-                <h3 className="mb-5 font-semibold">Mit URL manuell zuordnen</h3>
+            <div className="grid items-start gap-4 bg-vault-800/55 p-4 lg:grid-cols-2 sm:p-5">
+              <div className="rounded-2xl border border-vault-700 bg-white p-5 shadow-sm sm:p-6">
+                <MatchingMethodHeader
+                  icon={Link2}
+                  title="Mit URL manuell zuordnen"
+                  description="Beste Option, wenn du die Zielseite bereits kennst."
+                  accent="border border-emerald-200 bg-emerald-50 text-merchant-success"
+                />
                 <MappingForm action={createMapping} products={products} variants={variants} competitors={competitors} />
               </div>
-              <div className="p-5 sm:p-6">
-                <h3 className="mb-5 font-semibold">Automatische Vorschläge</h3>
+              <div className="rounded-2xl border border-vault-700 bg-white p-5 shadow-sm sm:p-6">
+                <MatchingMethodHeader
+                  icon={Bot}
+                  title="Automatische Vorschläge"
+                  description="Nutzt GTIN/EAN oder Produktname, bleibt aber prüfpflichtig."
+                  accent="border border-vault-700 bg-vault-800 text-vault-100"
+                />
                 <MatchSuggestionForm action={generateSuggestions} products={products} variants={variants} competitors={competitors} />
               </div>
             </div>
-            <div className="border-t border-vault-700">
-              <div className="flex items-center justify-between px-5 py-4 sm:px-6">
-                <h3 className="font-semibold">Freigabewarteschlange</h3>
-                <span className="font-mono text-xs text-vault-500">{suggestions.length} offen</span>
+            <div className="border-t border-vault-700 bg-white">
+              <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-lg bg-vault-800 text-vault-300">
+                    <ListChecks className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h3 className="font-semibold">Freigabewarteschlange</h3>
+                    <p className="mt-1 text-xs text-vault-500">Prüfe Trefferqualität, bevor PriceVault daraus eine aktive Preisquelle erstellt.</p>
+                  </div>
+                </div>
+                <span className="w-fit rounded-full border border-vault-700 bg-vault-800 px-3 py-1 font-mono text-xs text-vault-500">{suggestions.length} offen</span>
               </div>
               {suggestions.length ? (
                 <div className="divide-y divide-vault-700/70 border-t border-vault-700">
                   {suggestions.map((suggestion) => (
-                    <article key={suggestion.id} className="grid gap-4 p-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_120px_auto] lg:items-center">
+                    <article key={suggestion.id} className="grid gap-4 p-5 transition hover:bg-vault-800/80 sm:px-6 lg:grid-cols-[minmax(0,1fr)_140px_auto] lg:items-center">
                       <div className="min-w-0">
-                        <p className="font-semibold">{suggestion.products?.name} · {suggestion.product_variants?.name}</p>
+                        <p className="font-semibold text-vault-100">{suggestion.products?.name} · {suggestion.product_variants?.name}</p>
                         <p className="mt-1 text-sm text-vault-300">{suggestion.candidate_title}</p>
                         <a className="mt-1 block truncate font-mono text-xs text-merchant-success hover:underline" href={suggestion.candidate_url} target="_blank" rel="noreferrer">
                           {suggestion.candidate_url}
                         </a>
                       </div>
-                      <div>
-                        <p className="font-mono text-sm font-semibold">{Number(suggestion.confidence * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</p>
+                      <div className="rounded-xl border border-vault-700 bg-white px-3 py-2">
+                        <p className="font-mono text-sm font-semibold text-vault-100">{Number(suggestion.confidence * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</p>
                         <p className="mt-1 text-xs text-vault-500">{suggestion.match_method === 'gtin' ? 'GTIN / EAN' : 'Namensabgleich'}</p>
                       </div>
-                      <div className="flex gap-4 lg:justify-end">
-                        <MutationButton id={suggestion.id} label="Freigeben" pendingLabel="Wird freigegeben …" action={approveSuggestion} tone="neutral" />
-                        <MutationButton id={suggestion.id} label="Ablehnen" pendingLabel="Wird abgelehnt …" action={rejectSuggestion} />
+                      <div className="flex flex-wrap gap-3 lg:justify-end">
+                        <MutationButton id={suggestion.id} label="Freigeben" pendingLabel="Wird freigegeben …" action={approveSuggestion} tone="neutral" icon="approve" iconOnly />
+                        <MutationButton id={suggestion.id} label="Ablehnen" pendingLabel="Wird abgelehnt …" action={rejectSuggestion} icon="reject" iconOnly />
                       </div>
                     </article>
                   ))}
@@ -501,7 +837,7 @@ export default async function ProductsPage() {
                         {variants.filter((variant) => variant.product_id === product.id).length} Variante(n)
                       </p>
                     </div>
-                    <MutationButton id={product.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivateProduct} />
+                    <MutationButton id={product.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivateProduct} icon="trash" iconOnly />
                   </article>
                 ))}
               </div>

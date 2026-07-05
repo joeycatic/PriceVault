@@ -103,6 +103,41 @@ export default async function EditCompetitorPage({ params }: { params: Promise<{
     }
   }
 
+  async function detectAction(input: { url: string }) {
+    'use server'
+    try {
+      const response = await backendFetch('/scrape/detect-selector', tenantId, {
+        method: 'POST',
+        body: JSON.stringify({ url: input.url }),
+        cache: 'no-store',
+      })
+      const payload = await response.json()
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : []
+      if (!response.ok) {
+        return { ok: false, message: payload.detail ?? 'Der Selektor konnte nicht erkannt werden.' }
+      }
+      if (!candidates.length) {
+        return { ok: false, message: 'Auf dieser Seite wurde kein stabiler Preis-Selektor erkannt.' }
+      }
+      const best = candidates[0]
+      return {
+        ok: true,
+        message: `Selektor erkannt: ${best.selector}`,
+        selector: best.selector,
+        price: best.price,
+        rawPriceText: best.raw_text,
+        candidates: candidates.map((candidate: { selector: string; raw_text: string; price: number; confidence: number }) => ({
+          selector: candidate.selector,
+          rawText: candidate.raw_text,
+          price: candidate.price,
+          confidence: candidate.confidence,
+        })),
+      }
+    } catch {
+      return { ok: false, message: 'Der Scraper-Dienst ist nicht erreichbar.' }
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -117,6 +152,7 @@ export default async function EditCompetitorPage({ params }: { params: Promise<{
           minimumFrequency={minimumFrequency}
           saveAction={saveAction}
           testAction={testAction}
+          detectAction={detectAction}
         />
       </section>
       <section className="panel mt-6 overflow-hidden" aria-labelledby="competitor-products">

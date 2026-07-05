@@ -1,7 +1,8 @@
 import { revalidatePath } from 'next/cache'
+import { BellRing, Trash2 } from 'lucide-react'
 
 import { AlertForm } from '@/components/ui/AlertForm'
-import { PageHeader } from '@/components/ui/MerchantUI'
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
 import { planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
@@ -39,6 +40,8 @@ export default async function AlertsPage() {
   const events = eventResult.data ?? []
   const deliveries = deliveryResult.data ?? []
   const alertLimit = planLimit(tenant?.plan).alerts
+  const activeAlerts = alerts.filter((alert) => alert.active)
+  const statusAlerts = alerts.filter((alert) => ['out_of_stock', 'back_in_stock', 'source_broken'].includes(alert.condition))
 
   async function saveAction(formData: FormData) {
     'use server'
@@ -95,16 +98,33 @@ export default async function AlertsPage() {
       {!tenant ? (
         <div className="panel p-6 text-sm text-amber-800">Für dieses Konto wurde noch kein Mandant eingerichtet.</div>
       ) : (
+        <>
+        <div className="mb-6">
+          <MetricGrid items={[
+            { label: 'Aktive Regeln', value: activeAlerts.length, detail: alertLimit === null ? 'Kein Limit' : `${activeAlerts.length}/${alertLimit} genutzt`, tone: 'success' },
+            { label: 'Statusregeln', value: statusAlerts.length, detail: 'Bestand / Quellenfehler' },
+            { label: 'Ereignisse', value: events.length, detail: 'Letzte 10 geladen', tone: events.length ? 'warning' : 'neutral' },
+            { label: 'Zustellungen', value: deliveries.length, detail: 'Kanalversuche', tone: deliveries.length ? 'success' : 'neutral' },
+          ]} />
+        </div>
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(380px,.85fr)_minmax(0,1.15fr)]">
-          <section className="panel p-5 sm:p-6" aria-labelledby="new-alert">
-            <p className="eyebrow">Neue Regel</p>
-            <h2 id="new-alert" className="mb-6 mt-2 text-xl font-semibold">Preisalarm anlegen</h2>
+          <section className="panel overflow-hidden" aria-labelledby="new-alert">
+            <div className="border-b border-vault-700 bg-vault-100 p-5 text-white sm:p-6">
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+                <BellRing className="h-4 w-4" aria-hidden="true" />
+                Neue Regel
+              </p>
+              <h2 id="new-alert" className="mt-2 text-2xl font-bold tracking-[-0.03em]">Preisalarm anlegen</h2>
+              <p className="mt-2 text-sm leading-6 text-white/65">Definiere, wann PriceVault dein Team informieren soll.</p>
+            </div>
+            <div className="p-5 sm:p-6">
             {alertLimit !== null && (
               <p className="mb-5 text-sm text-vault-400">
                 Dein Plan nutzt {alerts.filter((alert) => alert.active).length} von {alertLimit} aktiven Preisalarmen.
               </p>
             )}
             <AlertForm products={products} competitors={competitors} saveAction={saveAction} />
+            </div>
           </section>
 
           <section className="space-y-3" aria-labelledby="alert-list">
@@ -114,11 +134,11 @@ export default async function AlertsPage() {
               const competitor = competitors.find((item) => item.id === alert.competitor_id)
               const suffix = alert.condition.endsWith('_pct') || alert.threshold_unit === 'percent' ? '%' : alert.condition === 'source_broken' ? 'Fehler' : '€'
               return (
-                <article key={alert.id} className="panel p-5">
+                <article key={alert.id} className="panel overflow-hidden p-5 transition hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(26,26,26,.10)]">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${alert.active ? 'bg-merchant-success' : 'bg-vault-500'}`} />
+                      <span className={`h-2.5 w-2.5 rounded-full ${alert.active ? 'bg-merchant-success' : 'bg-vault-500'}`} />
                         <h3 className="font-semibold">{conditionLabels[alert.condition]}</h3>
                       </div>
                       <p className="mt-2 text-sm text-vault-300">
@@ -130,7 +150,9 @@ export default async function AlertsPage() {
                     </div>
                     <form action={deleteAlert}>
                       <input type="hidden" name="id" value={alert.id} />
-                      <button className="text-xs font-semibold text-red-700 hover:text-red-800">Löschen</button>
+                      <button className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-800 transition hover:bg-red-100" aria-label="Preisalarm löschen">
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
                     </form>
                   </div>
                   <details className="mt-4 border-t border-vault-700 pt-4">
@@ -146,6 +168,7 @@ export default async function AlertsPage() {
             )}
           </section>
         </div>
+        </>
       )}
       {tenant && (
         <div className="mt-6 grid gap-6 xl:grid-cols-2">

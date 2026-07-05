@@ -58,6 +58,33 @@ export default async function HomePage() {
           </div>
         </section>
 
+        <section className="border-b border-vault-700 bg-white py-8 sm:py-10" aria-labelledby="signup-cta-heading">
+          <div className="mx-auto max-w-[1180px] px-5 sm:px-8">
+            <div className="grid overflow-hidden rounded-2xl border border-vault-700 bg-vault-100 text-white shadow-[0_20px_60px_rgba(26,26,26,.18)] lg:grid-cols-[1fr_auto]">
+              <div className="relative overflow-hidden p-6 sm:p-8">
+                <div className="absolute -right-16 -top-20 h-44 w-44 rounded-full bg-merchant-success/25 blur-3xl" aria-hidden="true" />
+                <p className="relative inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/80">
+                  <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+                  In wenigen Minuten eingerichtet
+                </p>
+                <h2 id="signup-cta-heading" className="relative mt-4 max-w-2xl text-2xl font-bold tracking-[-0.03em] sm:text-3xl">
+                  Starte kostenlos mit deinem ersten Produkt und einer Mitbewerberquelle.
+                </h2>
+                <p className="relative mt-3 max-w-2xl text-sm leading-6 text-white/70">
+                  Erstelle dein Konto, lege deinen Shop an und prüfe direkt die erste Preisquelle. Keine Kreditkarte erforderlich.
+                </p>
+              </div>
+              <div className="flex flex-col justify-center gap-3 border-t border-white/10 bg-white/[0.06] p-6 sm:p-8 lg:min-w-80 lg:border-l lg:border-t-0">
+                <Link href={primaryHref} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-5 text-sm font-bold text-vault-100 transition hover:-translate-y-0.5 hover:bg-vault-950">
+                  {tenant ? 'Dashboard öffnen' : 'Jetzt kostenlos anmelden'}
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+                {!tenant && <Link href="/login" className="text-center text-xs font-semibold text-white/65 hover:text-white">Ich habe bereits ein Konto</Link>}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section id="produkt" className="border-b border-vault-700 bg-vault-950 py-16 sm:py-20">
           <div className="mx-auto max-w-[1180px] px-5 sm:px-8">
             <div className="grid gap-10 lg:grid-cols-[0.75fr_1.25fr] lg:items-center">

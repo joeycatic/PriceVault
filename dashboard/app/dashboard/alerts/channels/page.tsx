@@ -1,7 +1,8 @@
 import { revalidatePath } from 'next/cache'
+import { Radio, Send, Trash2, Webhook } from 'lucide-react'
 
 import { backendFetch, currentTenant } from '@/lib/backend'
-import { PageHeader } from '@/components/ui/MerchantUI'
+import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { MutationButton } from '@/components/ui/MutationButton'
 import { hasPlan } from '@/lib/plan-gates'
 
@@ -81,8 +82,24 @@ export default async function AlertChannelsPage() {
   return (
     <>
       <PageHeader eyebrow="Preisalarme" title="Kanäle" description="Webhook- und Slack-Ziele für automatische Benachrichtigungen verwalten." />
+      <div className="mb-6">
+        <MetricGrid items={[
+          { label: 'Aktive Kanäle', value: data.filter((channel) => channel.active).length, tone: data.length ? 'success' : 'neutral' },
+          { label: 'Zustellungen', value: deliveries.length, detail: 'Historie geladen' },
+          { label: 'Plan-Zugriff', value: canManageIntegrations ? 'Aktiv' : 'Gesperrt', tone: canManageIntegrations ? 'success' : 'warning' },
+          { label: 'Typen', value: 'Webhook / Slack' },
+        ]} />
+      </div>
       {canManageIntegrations ? (
-        <section className="panel p-5">
+        <section className="panel overflow-hidden">
+          <div className="border-b border-vault-700 bg-vault-100 p-5 text-white">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+              <Radio className="h-4 w-4" aria-hidden="true" />
+              Neuer Kanal
+            </p>
+            <h2 className="mt-2 text-xl font-bold">Benachrichtigungsziel verbinden</h2>
+          </div>
+          <div className="p-5">
           <form action={createChannel} className="grid gap-3 lg:grid-cols-[180px_1fr_auto]">
             <label>
               <span className="field-label">Typ</span>
@@ -97,6 +114,7 @@ export default async function AlertChannelsPage() {
             </label>
             <button className="button-primary self-end">Kanal speichern</button>
           </form>
+          </div>
         </section>
       ) : (
         <div className="panel border-l-2 border-l-merchant-success p-5 text-sm text-vault-300">
@@ -107,19 +125,26 @@ export default async function AlertChannelsPage() {
         <div className="border-b border-vault-700 px-5 py-4 font-semibold">Aktive Kanäle</div>
         <div className="divide-y divide-vault-700/70">
           {data.map((channel) => (
-            <article key={channel.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
+            <article key={channel.id} className="flex flex-col gap-3 p-5 transition hover:bg-vault-950 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-vault-950 text-vault-100">
+                  <Webhook className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
                 <h2 className="font-semibold">{channel.type}</h2>
                 <p className="mt-1 max-w-2xl truncate font-mono text-xs text-vault-500">
                   {channel.config?.url ?? channel.config?.webhook_url}
                 </p>
+                </div>
               </div>
               {canManageIntegrations && (
                 <div className="flex gap-2">
                   <MutationButton id={channel.id} label="Test" pendingLabel="Sendet …" action={testChannel} tone="neutral" />
                   <form action={deleteChannel}>
                     <input type="hidden" name="id" value={channel.id} />
-                    <button className="text-xs font-semibold text-red-700">Entfernen</button>
+                    <button className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-800 transition hover:bg-red-100" aria-label="Kanal entfernen">
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
                   </form>
                 </div>
               )}
@@ -134,7 +159,7 @@ export default async function AlertChannelsPage() {
           {deliveries.map((delivery) => (
             <article key={delivery.id} className="p-5 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span>{delivery.channel_type} · {delivery.status}</span>
+                <span className="flex items-center gap-2"><Send className="h-4 w-4 text-vault-500" aria-hidden="true" />{delivery.channel_type} · {delivery.status}</span>
                 <span className="font-mono text-xs text-vault-500">{delivery.attempt_count} Versuch(e)</span>
               </div>
               {delivery.last_error && <p className="mt-2 text-xs text-red-700">{delivery.last_error}</p>}

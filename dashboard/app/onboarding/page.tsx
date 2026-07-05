@@ -12,6 +12,11 @@ function safeNextPath(value: string | string[] | undefined) {
   return value
 }
 
+function metadataText(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key]
+  return typeof value === 'string' ? value : ''
+}
+
 export default async function OnboardingPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const supabase = await createClient()
   const {
@@ -21,7 +26,7 @@ export default async function OnboardingPage({ searchParams }: { searchParams?: 
 
   const { data: shop } = await supabase
     .from('tenants')
-    .select('id, shop_name, shop_url')
+    .select('*')
     .limit(1)
     .maybeSingle()
 
@@ -39,11 +44,24 @@ export default async function OnboardingPage({ searchParams }: { searchParams?: 
   const params = searchParams ? await searchParams : {}
   const accountSetupHint = params.account_setup === '1'
   const postSetupHref = safeNextPath(params.next) ?? '/dashboard'
+  const metadata = user.user_metadata as Record<string, unknown>
+  const signupPrefill = {
+    company_legal_name: metadataText(metadata, 'signup_company_legal_name'),
+    shop_name: metadataText(metadata, 'signup_shop_name'),
+    shop_url: metadataText(metadata, 'signup_shop_url'),
+    industry: metadataText(metadata, 'signup_industry'),
+    company_size: metadataText(metadata, 'signup_company_size'),
+    shop_platform: metadataText(metadata, 'signup_shop_platform'),
+    headquarters_country: metadataText(metadata, 'signup_headquarters_country'),
+    headquarters_city: metadataText(metadata, 'signup_headquarters_city'),
+    annual_revenue_band: metadataText(metadata, 'signup_annual_revenue_band'),
+  }
 
   return (
     <OnboardingWizard
       initialStep={initialStep}
-      initialShop={shop ? { shop_name: shop.shop_name, shop_url: shop.shop_url } : null}
+      initialShop={shop}
+      signupPrefill={signupPrefill}
       initialProducts={products}
       initialCompetitors={competitors}
       email={user.email ?? 'Konto'}
