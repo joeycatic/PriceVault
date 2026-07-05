@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/ui/MerchantUI'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { minimumScrapeFrequency, planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor } from '@/lib/types'
+import type { Competitor, StoreRecommendation } from '@/lib/types'
 import { formatRelativeTime } from '@/lib/utils'
 
 type CompetitorSourceStatus = {
@@ -44,6 +44,18 @@ export default async function CompetitorsPage() {
   const activeSources = sources.filter((source) => source.active)
   const healthySources = activeSources.filter((source) => source.health_status === 'healthy')
   const brokenSources = activeSources.filter((source) => source.health_status === 'broken')
+  let storeRecommendations: StoreRecommendation[] = []
+  if (tenant) {
+    try {
+      const response = await backendFetch('/competitors/recommendations?limit=6', tenant.id, { cache: 'no-store' })
+      if (response.ok) {
+        const payload = (await response.json()) as { recommendations?: StoreRecommendation[] }
+        storeRecommendations = Array.isArray(payload.recommendations) ? payload.recommendations : []
+      }
+    } catch {
+      storeRecommendations = []
+    }
+  }
   const sourceCountByCompetitor = new Map<string, number>()
   for (const source of activeSources) {
     sourceCountByCompetitor.set(source.competitor_id, (sourceCountByCompetitor.get(source.competitor_id) ?? 0) + 1)
@@ -314,7 +326,13 @@ export default async function CompetitorsPage() {
             )}
           </div>
           <div className="p-5 sm:p-6">
-          <CompetitorForm minimumFrequency={minimumFrequency} saveAction={saveAction} testAction={testAction} detectAction={detectAction} />
+            <CompetitorForm
+              recommendations={storeRecommendations}
+              minimumFrequency={minimumFrequency}
+              saveAction={saveAction}
+              testAction={testAction}
+              detectAction={detectAction}
+            />
           </div>
         </section>
       </div>

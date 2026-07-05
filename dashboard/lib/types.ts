@@ -56,6 +56,17 @@ export type Competitor = {
   created_at: string
 }
 
+export type StoreRecommendation = {
+  shop_name: string
+  base_url: string
+  host: string
+  industry: string
+  profile: string
+  confidence: number
+  matching_terms: string[]
+  reasons: string[]
+}
+
 export type Product = {
   id: string
   tenant_id: string
