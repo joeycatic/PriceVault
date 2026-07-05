@@ -1,7 +1,8 @@
 """Tenant-scoped competitor CRUD endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from agents.store_recommender import recommend_stores
 from auth.plan_guard import assert_plan_capacity, assert_scrape_frequency, require_tenant_admin_from_header
 from db import queries
 from models.schemas import CompetitorCreate, CompetitorUpdate
@@ -15,6 +16,23 @@ router = APIRouter(prefix="/competitors", tags=["competitors"])
 @router.get("")
 async def list_all(tenant_id: str = Depends(get_tenant)) -> list[dict]:
     return await queries.list_competitors(tenant_id)
+
+
+@router.get("/recommendations")
+async def recommendations(
+    limit: int = Query(default=8, ge=1, le=20),
+    tenant: dict = Depends(require_tenant_admin_from_header),
+) -> dict:
+    products = await queries.list_products(tenant["id"], active_only=True)
+    competitors = await queries.list_competitors(tenant["id"], active_only=True)
+    return {
+        "recommendations": recommend_stores(
+            tenant=tenant,
+            products=products,
+            competitors=competitors,
+            limit=limit,
+        )
+    }
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -89,6 +89,7 @@ def test_openapi_contains_phase_routes():
         "/scrape/sources/{mapping_id}/repair",
         "/integrations/prices/latest",
         "/products/discover",
+        "/competitors/recommendations",
     ):
         assert path in paths
 
@@ -4695,6 +4696,73 @@ def test_competitor_routes_are_tenant_scoped(monkeypatch):
     assert missing_update.status_code == 404
     assert deleted.status_code == 204
     assert missing_delete.status_code == 404
+
+
+def test_store_recommendations_use_tenant_products_and_exclude_known_hosts():
+    from agents.store_recommender import recommend_stores
+
+    recommendations = recommend_stores(
+        tenant={
+            "id": "tenant-1",
+            "industry": "electronics",
+            "headquarters_country": "DE",
+            "shop_url": "https://own-shop.example",
+        },
+        products=[
+            {"name": "Gaming Monitor 27 Zoll"},
+            {"name": "Laptop Tasche"},
+        ],
+        competitors=[{"base_url": "https://www.cyberport.de/notebooks"}],
+        limit=4,
+    )
+
+    assert recommendations
+    assert all(item["host"] != "cyberport.de" for item in recommendations)
+    assert recommendations == sorted(recommendations, key=lambda item: item["confidence"], reverse=True)
+    assert recommendations[0]["shop_name"] in {"Alternate", "Notebooksbilliger"}
+    assert {"monitor", "laptop"}.intersection(recommendations[0]["matching_terms"])
+
+
+def test_competitor_recommendations_route_is_tenant_scoped(monkeypatch):
+    import main
+    from db import queries
+    from routers import get_tenant
+
+    async def fake_tenant():
+        yield "tenant-1"
+
+    async def fake_tenant_by_id(tenant_id):
+        assert tenant_id == "tenant-1"
+        return {
+            "id": "tenant-1",
+            "user_id": "user-1",
+            "industry": "electronics",
+            "headquarters_country": "DE",
+            "shop_url": "https://own-shop.example",
+            "plan": "pro",
+        }
+
+    async def fake_products(tenant_id, active_only=False):
+        assert (tenant_id, active_only) == ("tenant-1", True)
+        return [{"name": "Gaming Monitor 27 Zoll"}]
+
+    async def fake_competitors(tenant_id, active_only=False):
+        assert (tenant_id, active_only) == ("tenant-1", True)
+        return [{"base_url": "https://www.cyberport.de"}]
+
+    monkeypatch.setattr(queries, "get_tenant_by_id", fake_tenant_by_id)
+    monkeypatch.setattr(queries, "list_products", fake_products)
+    monkeypatch.setattr(queries, "list_competitors", fake_competitors)
+    main.app.dependency_overrides[get_tenant] = fake_tenant
+    try:
+        response = TestClient(main.app).get("/competitors/recommendations?limit=2")
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["recommendations"]) == 2
+    assert all(item["host"] != "cyberport.de" for item in payload["recommendations"])
 
 
 def test_snapshot_routes_use_tenant_and_bounded_history_window(monkeypatch):
