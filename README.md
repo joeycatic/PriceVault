@@ -51,6 +51,10 @@ dotenv -f .env run -- python scheduler.py
 # Existing project: review and apply the idempotent additions in backend/db/schema.sql via the SQL editor
 ```
 
+`backend/db/schema.sql` is authoritative. The legacy Alembic directory is historical and is not a
+complete upgrade path. Record the applied schema commit and SQL-editor execution evidence in the
+release checklist.
+
 In Supabase Auth, add `http://localhost:3000/api/auth/callback` as a redirect URL. New users create their tenant, first product, and first price source through the in-app onboarding flow after signing in.
 
 ### Dashboard
@@ -98,3 +102,12 @@ environment variables:
 - `pricevault-scheduler` uses `infra/railway.scheduler.toml` and dispatches recurring work.
 
 The backend workflow deploys the configured services after tests pass on `main`.
+
+## Launch controls
+
+- Price snapshots retain extraction evidence; only `validation_state=valid` data feeds alerts, insights, and repricing.
+- Robots policy and approved-host checks run before scraping. Redis enforces shared domain concurrency and request limits.
+- Automatic repricing defaults off and the kill switch defaults on. Suggestions and manual approvals remain available.
+- Paid checkout is limited to EU businesses. German invoices use 19% VAT; other EU businesses require a current VIES-confirmed VAT ID.
+- Deletion requests have a 14-day cancellation period. Operational data is purged at execution while restricted accounting records remain.
+- Operational runbooks and launch evidence requirements are in `docs/operations/`.
