@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
-import { Activity, ExternalLink, Gauge, Globe2, Plus, Radar, ShieldCheck, Store, Trash2 } from 'lucide-react'
+import { Activity, ArrowRight, ExternalLink, Gauge, Globe2, Lightbulb, Plus, Radar, Search, ShieldCheck, Store, Trash2, WandSparkles } from 'lucide-react'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
 import { PageHeader } from '@/components/ui/MerchantUI'
@@ -16,6 +16,10 @@ type CompetitorSourceStatus = {
   health_status: 'healthy' | 'degraded' | 'broken'
 }
 
+type CompetitorsPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}
+
 function competitorInitials(name: string) {
   return name
     .split(/\s+/)
@@ -26,7 +30,99 @@ function competitorInitials(name: string) {
     .toUpperCase() || 'S'
 }
 
-export default async function CompetitorsPage() {
+function stringParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
+function recommendationHref(recommendation: StoreRecommendation) {
+  const params = new URLSearchParams({
+    recommended_shop: recommendation.shop_name,
+    recommended_url: recommendation.base_url,
+  })
+  return `/dashboard/competitors?${params.toString()}#new-competitor`
+}
+
+function StoreDiscoverySection({
+  recommendations,
+  unavailable,
+}: {
+  recommendations: StoreRecommendation[]
+  unavailable: boolean
+}) {
+  const visibleRecommendations = recommendations.slice(0, 6)
+  return (
+    <section className="mb-6 overflow-hidden rounded-2xl border border-vault-700 bg-white shadow-[0_18px_50px_rgba(26,26,26,.10)]" aria-labelledby="store-discovery">
+      <div className="grid gap-px bg-vault-700 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.6fr)]">
+        <div className="relative overflow-hidden bg-vault-100 p-5 text-white sm:p-6">
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-merchant-success via-white/50 to-vault-100" aria-hidden="true" />
+          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+            <Lightbulb className="h-4 w-4" aria-hidden="true" />
+            Branchenradar
+          </p>
+          <h2 id="store-discovery" className="mt-3 text-2xl font-bold tracking-[-0.03em]">Passende Shops automatisch vorschlagen.</h2>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-white/65">
+            PriceVault nutzt Branche, Marktland und Produktbegriffe, um neue Wettbewerber vorzuschlagen. Nach dem Anlegen sucht der Produktfinder nach passenden Produktseiten; manuelle URLs bleiben als Override für verpasste Treffer.
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
+            <div className="rounded-lg border border-white/10 bg-white/10 p-3">
+              <p className="font-mono text-lg font-semibold">{visibleRecommendations.length}</p>
+              <p className="mt-1 text-white/55">Shop-Kandidaten</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/10 p-3">
+              <p className="font-mono text-lg font-semibold">Auto</p>
+              <p className="mt-1 text-white/55">Produktfinder</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-vault-950 p-4 sm:p-5">
+          {visibleRecommendations.length ? (
+            <div className="grid gap-3 lg:grid-cols-3">
+              {visibleRecommendations.map((recommendation) => (
+                <article key={recommendation.host} className="group flex min-h-56 flex-col justify-between rounded-xl border border-vault-700 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-merchant-success hover:shadow-[0_18px_38px_rgba(36,166,118,.14)]">
+                  <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-base font-bold">{recommendation.shop_name}</h3>
+                        <p className="mt-1 truncate font-mono text-xs text-vault-500">{recommendation.host}</p>
+                      </div>
+                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                        {Math.round(recommendation.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="mt-4 text-xs leading-5 text-vault-500">{recommendation.reasons.join(' · ')}</p>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3 border-t border-vault-700 pt-4">
+                    <a className="inline-flex items-center gap-1 text-xs font-semibold text-vault-500 transition hover:text-merchant-success" href={recommendation.base_url} target="_blank" rel="noreferrer">
+                      Shop prüfen
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
+                    <Link className="button-primary min-h-9 px-3 py-2 text-xs" href={recommendationHref(recommendation)}>
+                      Übernehmen
+                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-vault-700 bg-white p-6 text-sm leading-6 text-vault-500">
+              <p className="flex items-center gap-2 font-semibold text-vault-100">
+                <Search className="h-4 w-4" aria-hidden="true" />
+                Noch keine Shop-Vorschläge sichtbar.
+              </p>
+              <p className="mt-2">
+                {unavailable ? 'Der Backend-Dienst ist gerade nicht erreichbar.' : 'Pflege Branche und Produkte, damit PriceVault passende Wettbewerber ableiten kann.'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export default async function CompetitorsPage({ searchParams }: CompetitorsPageProps) {
+  const params = await searchParams
   const supabase = await createClient()
   const tenant = await currentTenant()
   const [{ data }, { data: sourceData }] = tenant
@@ -45,17 +141,23 @@ export default async function CompetitorsPage() {
   const healthySources = activeSources.filter((source) => source.health_status === 'healthy')
   const brokenSources = activeSources.filter((source) => source.health_status === 'broken')
   let storeRecommendations: StoreRecommendation[] = []
+  let recommendationsUnavailable = false
   if (tenant) {
     try {
       const response = await backendFetch('/competitors/recommendations?limit=6', tenant.id, { cache: 'no-store' })
       if (response.ok) {
         const payload = (await response.json()) as { recommendations?: StoreRecommendation[] }
         storeRecommendations = Array.isArray(payload.recommendations) ? payload.recommendations : []
+      } else {
+        recommendationsUnavailable = true
       }
     } catch {
+      recommendationsUnavailable = true
       storeRecommendations = []
     }
   }
+  const recommendedShop = stringParam(params?.recommended_shop).slice(0, 120)
+  const recommendedUrl = stringParam(params?.recommended_url).slice(0, 2048)
   const sourceCountByCompetitor = new Map<string, number>()
   for (const source of activeSources) {
     sourceCountByCompetitor.set(source.competitor_id, (sourceCountByCompetitor.get(source.competitor_id) ?? 0) + 1)
@@ -80,17 +182,53 @@ export default async function CompetitorsPage() {
         return { ok: false, message: `Dein Plan erlaubt maximal ${competitorLimit} aktive Mitbewerber.` }
       }
     }
-    const { error } = await client.from('competitors').insert({
+    const { data: createdCompetitor, error } = await client.from('competitors').insert({
       tenant_id: tenant.id,
       shop_name: String(formData.get('shop_name')),
       base_url: String(formData.get('base_url')),
       selector_price: String(formData.get('selector_price') || '') || null,
       selector_stock: String(formData.get('selector_stock') || '') || null,
       scrape_freq_h: frequency,
-    })
+    }).select('id').single()
     if (error) return { ok: false, message: 'Der Mitbewerber konnte nicht gespeichert werden.' }
+    let matchMessage = ''
+    if (createdCompetitor?.id) {
+      try {
+        const response = await backendFetch('/match/suggestions/generate-missing', tenant.id, {
+          method: 'POST',
+          body: JSON.stringify({ competitor_id: createdCompetitor.id, limit: 6 }),
+          signal: AbortSignal.timeout(120_000),
+        })
+        const payload = await response.json()
+        if (response.ok && Number(payload.suggestions) > 0) {
+          matchMessage = ` ${Number(payload.suggestions)} Produktvorschlag/Vorschläge wurden vorbereitet.`
+        }
+      } catch {
+        matchMessage = ' Die automatische Produktsuche konnte nicht abgeschlossen werden; manuelle URLs bleiben verfügbar.'
+      }
+    }
     revalidatePath('/dashboard/competitors')
-    return { ok: true, message: 'Mitbewerber wurde angelegt.' }
+    revalidatePath('/dashboard/products')
+    revalidatePath('/dashboard')
+    return { ok: true, message: `Mitbewerber wurde angelegt.${matchMessage}` }
+  }
+
+  async function generateMissingMatches(formData: FormData) {
+    'use server'
+    if (!tenant) return
+    const competitorId = String(formData.get('competitor_id') ?? '')
+    if (!competitorId) return
+    try {
+      await backendFetch('/match/suggestions/generate-missing', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({ competitor_id: competitorId, limit: 10 }),
+        signal: AbortSignal.timeout(120_000),
+      })
+      revalidatePath('/dashboard/products')
+      revalidatePath('/dashboard/competitors')
+    } catch {
+      return
+    }
   }
 
   async function testAction(input: { url: string; selectorPrice: string; selectorStock: string }) {
@@ -219,6 +357,8 @@ export default async function CompetitorsPage() {
         </div>
       </section>
 
+      <StoreDiscoverySection recommendations={storeRecommendations} unavailable={recommendationsUnavailable} />
+
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(380px,.8fr)]">
         <section className="panel overflow-hidden" aria-labelledby="competitor-list">
           <div className="flex flex-col gap-3 border-b border-vault-700 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -282,6 +422,14 @@ export default async function CompetitorsPage() {
                       <span className="truncate font-mono">{competitor.selector_price || 'Selektor wird pro Produkt gesetzt'}</span>
                     </div>
                     <div className="flex shrink-0 gap-2">
+                      {competitor.active && (
+                        <form action={generateMissingMatches}>
+                          <input type="hidden" name="competitor_id" value={competitor.id} />
+                          <button className="grid h-9 w-9 place-items-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 transition hover:bg-emerald-100" aria-label={`Produktvorschläge für ${competitor.shop_name} suchen`}>
+                            <WandSparkles className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </form>
+                      )}
                       <Link className="button-secondary min-h-9 px-3 py-2 text-xs" href={`/dashboard/competitors/${competitor.id}`}>Bearbeiten</Link>
                     {competitor.active && (
                       <form action={remove}>
@@ -317,7 +465,7 @@ export default async function CompetitorsPage() {
             </p>
             <h2 id="new-competitor" className="mt-2 text-2xl font-bold tracking-[-0.03em]">Mitbewerber anlegen</h2>
             <p className="mt-2 text-sm leading-6 text-white/65">
-              Starte mit einer Produkt-URL. PriceVault kann den Preis-Selektor automatisch vorschlagen.
+              Starte mit einem Shop. PriceVault sucht danach passende Produktseiten; manuelle URLs überschreiben verpasste Treffer.
             </p>
             {competitorLimit !== null && (
               <div className="mt-4 rounded-xl bg-white/10 p-3 text-xs text-white/70">
@@ -327,7 +475,8 @@ export default async function CompetitorsPage() {
           </div>
           <div className="p-5 sm:p-6">
             <CompetitorForm
-              recommendations={storeRecommendations}
+              initialShopName={recommendedShop}
+              initialBaseUrl={recommendedUrl}
               minimumFrequency={minimumFrequency}
               saveAction={saveAction}
               testAction={testAction}
