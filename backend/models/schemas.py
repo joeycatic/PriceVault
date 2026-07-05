@@ -37,6 +37,11 @@ class MatchSuggestionGenerateRequest(APIModel):
     competitor_id: str
 
 
+class MatchSuggestionGenerateMissingRequest(APIModel):
+    competitor_id: str | None = None
+    limit: int = Field(default=10, ge=1, le=25)
+
+
 class CompetitorCreate(APIModel):
     shop_name: str = Field(min_length=1)
     base_url: HttpUrl

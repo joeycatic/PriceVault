@@ -90,6 +90,7 @@ def test_openapi_contains_phase_routes():
         "/integrations/prices/latest",
         "/products/discover",
         "/competitors/recommendations",
+        "/match/suggestions/generate-missing",
     ):
         assert path in paths
 
@@ -712,6 +713,81 @@ def test_match_suggestion_generate_approve_and_reject_are_tenant_scoped(monkeypa
     assert rejected.status_code == 200
     assert suggestions["suggestion-reject"]["status"] == "rejected"
     assert len(mappings) == 1
+
+
+def test_match_suggestion_generate_missing_scans_unmapped_pairs(monkeypatch):
+    from dataclasses import dataclass
+
+    import main
+    from auth.dependencies import get_current_tenant
+    from db import queries
+    from routers import scrape
+
+    async def fake_current_tenant():
+        return {"id": "tenant-1", "plan": "pro", "_role": "owner", "user_id": "user-1"}
+
+    async def fake_variants(tenant_id, product_id=None, active_only=False):
+        assert (tenant_id, product_id, active_only) == ("tenant-1", None, True)
+        return [
+            {"id": "variant-1", "product_id": "product-1", "name": "Standard", "gtin": "4006381333931"},
+            {"id": "variant-2", "product_id": "product-2", "name": "XL", "gtin": None},
+        ]
+
+    async def fake_products(tenant_id, active_only=False):
+        assert (tenant_id, active_only) == ("tenant-1", True)
+        return [
+            {"id": "product-1", "name": "Lampe"},
+            {"id": "product-2", "name": "Zelt"},
+        ]
+
+    async def fake_get_competitor(tenant_id, competitor_id):
+        assert (tenant_id, competitor_id) == ("tenant-1", "competitor-1")
+        return {"id": "competitor-1", "base_url": "https://shop.example"}
+
+    async def fake_existing_mapping(_tenant_id, variant_id, _competitor_id):
+        return {"id": "mapping-1"} if variant_id == "variant-2" else None
+
+    stored = []
+
+    @dataclass
+    class FakeCandidate:
+        url: str
+        title: str
+        confidence: float
+
+    class FakeMatcherAgent:
+        async def search(self, request):
+            assert request.product_name == "Lampe"
+            assert request.gtin == "4006381333931"
+            return [FakeCandidate("https://shop.example/lampe", "Lampe GTIN", 1.0)]
+
+    async def fake_create_suggestions(values):
+        stored.extend(values)
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(queries, "list_product_variants", fake_variants)
+    monkeypatch.setattr(queries, "list_products", fake_products)
+    monkeypatch.setattr(queries, "get_competitor", fake_get_competitor)
+    monkeypatch.setattr(queries, "get_mapping_for_variant_competitor", fake_existing_mapping)
+    monkeypatch.setattr(queries, "create_match_suggestions", fake_create_suggestions)
+    monkeypatch.setattr(scrape, "MatcherAgent", FakeMatcherAgent)
+    monkeypatch.setattr(scrape, "record_audit_event", fake_audit)
+    main.app.dependency_overrides[get_current_tenant] = fake_current_tenant
+    try:
+        response = TestClient(main.app).post(
+            "/match/suggestions/generate-missing",
+            json={"competitor_id": "competitor-1", "limit": 10},
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    assert response.json() == {"searched_pairs": 1, "skipped_pairs": 1, "suggestions": 1}
+    assert stored[0]["tenant_id"] == "tenant-1"
+    assert stored[0]["variant_id"] == "variant-1"
+    assert stored[0]["match_method"] == "gtin"
 
 
 def test_plan_rank_order():

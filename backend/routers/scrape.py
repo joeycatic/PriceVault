@@ -18,6 +18,7 @@ from auth.scrape_quota import release_scrape_slots, reserve_scrape_slots
 from db import queries
 from models.schemas import (
     MatchSearchRequest,
+    MatchSuggestionGenerateMissingRequest,
     MatchSuggestionGenerateRequest,
     ProductMappingRepair,
     ScrapeRunRequest,
@@ -273,6 +274,95 @@ async def generate_match_suggestions(
         variant_id=body.variant_id,
         competitor_id=body.competitor_id,
     )
+
+
+@router.post("/match/suggestions/generate-missing", status_code=status.HTTP_201_CREATED)
+async def generate_missing_match_suggestions(
+    body: MatchSuggestionGenerateMissingRequest,
+    tenant: dict = Depends(require_tenant_admin),
+) -> dict:
+    tenant_id = tenant["id"]
+    variants = await queries.list_product_variants(tenant_id, active_only=True)
+    products = {
+        product["id"]: product
+        for product in await queries.list_products(tenant_id, active_only=True)
+    }
+    competitors = (
+        [await queries.get_competitor(tenant_id, body.competitor_id)]
+        if body.competitor_id
+        else await queries.list_competitors(tenant_id, active_only=True)
+    )
+    competitors = [competitor for competitor in competitors if competitor]
+    if body.competitor_id and not competitors:
+        raise HTTPException(status_code=404, detail="Mitbewerber nicht gefunden")
+
+    matcher = MatcherAgent()
+    searched_pairs = 0
+    skipped_pairs = 0
+    created_candidates = 0
+    pending_values: list[dict] = []
+
+    for competitor in competitors:
+        for variant in variants:
+            if searched_pairs >= body.limit:
+                break
+            product = products.get(variant["product_id"])
+            if not product:
+                skipped_pairs += 1
+                continue
+            if await queries.get_mapping_for_variant_competitor(
+                tenant_id, variant["id"], competitor["id"]
+            ):
+                skipped_pairs += 1
+                continue
+
+            display_name = " ".join(
+                part for part in (product["name"], variant.get("name")) if part and part != "Standard"
+            )
+            candidates = await matcher.search(
+                MatchRequest(
+                    display_name,
+                    competitor["id"],
+                    competitor["base_url"],
+                    gtin=variant.get("gtin"),
+                )
+            )
+            method = "gtin" if variant.get("gtin") else "fuzzy"
+            pending_values.extend(
+                {
+                    "tenant_id": tenant_id,
+                    "product_id": product["id"],
+                    "variant_id": variant["id"],
+                    "competitor_id": competitor["id"],
+                    "candidate_url": candidate.url,
+                    "candidate_title": candidate.title,
+                    "confidence": candidate.confidence,
+                    "match_method": method,
+                }
+                for candidate in candidates
+            )
+            created_candidates += len(candidates)
+            searched_pairs += 1
+        if searched_pairs >= body.limit:
+            break
+
+    await queries.create_match_suggestions(pending_values)
+    await record_audit_event(
+        tenant,
+        action="match_suggestions.generated_missing",
+        resource_type="match_suggestion",
+        metadata={
+            "competitor_id": body.competitor_id,
+            "searched_pairs": searched_pairs,
+            "skipped_pairs": skipped_pairs,
+            "candidates": created_candidates,
+        },
+    )
+    return {
+        "searched_pairs": searched_pairs,
+        "skipped_pairs": skipped_pairs,
+        "suggestions": created_candidates,
+    }
 
 
 @router.post("/match/suggestions/{suggestion_id}/approve")
