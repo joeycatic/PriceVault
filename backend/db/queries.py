@@ -37,6 +37,33 @@ async def update_tenant(tenant_id: str, values: dict[str, Any]) -> dict[str, Any
     return rows[0] if rows else None
 
 
+async def upsert_subscription(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("subscriptions")
+        .upsert(
+            {
+                **values,
+                "tenant_id": tenant_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="tenant_id",
+        )
+    )
+    return rows[0]
+
+
+async def get_subscription(tenant_id: str) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("subscriptions")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
 async def create_billing_order(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("billing_orders").insert(values))
     return rows[0]
@@ -402,7 +429,7 @@ async def list_product_variants(
     tenant_id: str, product_id: str | None = None, active_only: bool = False
 ) -> list[dict[str, Any]]:
     def build() -> Any:
-        query = get_supabase().table("product_variants").select("*").eq("tenant_id", tenant_id)
+        query = get_supabase().table("product_variants").select("*, products(name)").eq("tenant_id", tenant_id)
         if product_id:
             query = query.eq("product_id", product_id)
         if active_only:
@@ -514,6 +541,22 @@ async def get_mapping_for_variant_competitor(
         .limit(1)
     )
     return rows[0] if rows else None
+
+
+async def has_pending_match_suggestion_for_variant_competitor(
+    tenant_id: str, variant_id: str, competitor_id: str
+) -> bool:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("match_suggestions")
+        .select("id")
+        .eq("tenant_id", tenant_id)
+        .eq("variant_id", variant_id)
+        .eq("competitor_id", competitor_id)
+        .eq("status", "pending")
+        .limit(1)
+    )
+    return bool(rows)
 
 
 async def create_match_suggestions(values: list[dict[str, Any]]) -> None:
@@ -1088,7 +1131,15 @@ async def mark_source_scrape_failure(
         "health_status": health_status,
         "broken_reason": error if health_status == "broken" else None,
     }
-    return await update_product_mapping(tenant_id, competitor_product_id, values)
+    updated = await update_product_mapping(tenant_id, competitor_product_id, values)
+    if health_status == "broken":
+        await record_product_event(
+            tenant_id,
+            "source_failure",
+            None,
+            dedupe_key=f"{competitor_product_id}:{failed_at[:10]}",
+        )
+    return updated
 
 
 async def get_latest_prices(tenant_id: str) -> list[dict[str, Any]]:
@@ -1105,7 +1156,7 @@ async def list_recent_snapshots(tenant_id: str, limit: int = 2000) -> list[dict[
     return await _execute(
         lambda: get_supabase()
         .table("price_snapshots")
-        .select("competitor_product_id,price,in_stock,scrape_ok,scraped_at,validation_state")
+        .select("competitor_product_id,price,price_type,in_stock,scrape_ok,scraped_at,validation_state")
         .eq("tenant_id", tenant_id)
         .order("scraped_at", desc=True)
         .limit(limit)
@@ -1263,9 +1314,80 @@ async def list_alert_events(tenant_id: str, limit: int) -> list[dict[str, Any]]:
     )
 
 
+async def get_open_map_violation(
+    tenant_id: str, variant_id: str, competitor_product_id: str
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("map_violations")
+        .select("*")
+        .eq("tenant_id", tenant_id)
+        .eq("variant_id", variant_id)
+        .eq("competitor_product_id", competitor_product_id)
+        .eq("status", "open")
+        .limit(1)
+    )
+    return rows[0] if rows else None
+
+
+async def create_map_violation(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("map_violations")
+        .insert({**values, "tenant_id": tenant_id})
+    )
+    return rows[0]
+
+
+async def list_map_violations(
+    tenant_id: str, violation_status: str = "open"
+) -> list[dict[str, Any]]:
+    def build() -> Any:
+        query = (
+            get_supabase()
+            .table("map_violations")
+            .select(
+                "*, products(name), product_variants(name,sku,currency), "
+                "competitor_products(competitor_url, competitors(shop_name))"
+            )
+            .eq("tenant_id", tenant_id)
+        )
+        if violation_status != "all":
+            query = query.eq("status", violation_status)
+        return query.order("detected_at", desc=True)
+
+    return await _execute(build)
+
+
+async def update_map_violation(
+    tenant_id: str, violation_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("map_violations")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", violation_id)
+    )
+    return rows[0] if rows else None
+
+
 async def insert_alert_event(values: dict[str, Any]) -> dict[str, Any]:
     rows = await _execute(lambda: get_supabase().table("alert_events").insert(values))
     return rows[0]
+
+
+async def update_alert_event(
+    tenant_id: str, event_id: str, values: dict[str, Any]
+) -> dict[str, Any] | None:
+    rows = await _execute(
+        lambda: get_supabase()
+        .table("alert_events")
+        .update(values)
+        .eq("tenant_id", tenant_id)
+        .eq("id", event_id)
+    )
+    return rows[0] if rows else None
 
 
 async def list_alert_events_since(tenant_id: str, since_iso: str) -> list[dict[str, Any]]:
@@ -1707,6 +1829,17 @@ async def list_scrape_jobs(tenant_id: str | None = None, limit: int = 100) -> li
         return query.order("queued_at", desc=True).limit(limit)
 
     return await _execute(build)
+
+
+async def list_scrape_jobs_since(since_iso: str) -> list[dict[str, Any]]:
+    return await _execute(
+        lambda: get_supabase()
+        .table("scrape_jobs")
+        .select("state,tenant_id,competitor_product_id,failure_reason,retry_count,queued_at,finished_at")
+        .gte("queued_at", since_iso)
+        .order("queued_at", desc=True)
+        .limit(5000)
+    )
 
 
 async def list_report_schedules(tenant_id: str) -> list[dict[str, Any]]:

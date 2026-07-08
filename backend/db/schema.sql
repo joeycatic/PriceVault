@@ -73,6 +73,29 @@ create index idx_tenants_viva_renewals
   on public.tenants(subscription_current_period_end)
   where billing_provider = 'viva' and subscription_status = 'active';
 
+create table public.subscriptions (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null unique references public.tenants(id) on delete cascade,
+  plan            text check (plan is null or plan in ('pro','agency')),
+  status          text not null default 'inactive'
+                    check (status in ('inactive','active','past_due','canceled')),
+  current_period_end timestamptz,
+  viva_card_token text,
+  viva_source_code text,
+  cancel_at_period_end boolean not null default false,
+  cancellation_effective_at timestamptz,
+  failed_payment_count int not null default 0 check (failed_payment_count >= 0),
+  last_payment_error text,
+  next_payment_retry_at timestamptz,
+  metadata        jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index idx_subscriptions_due_renewals
+  on public.subscriptions(current_period_end)
+  where status = 'active' and cancel_at_period_end = false;
+
 create table public.billing_orders (
   id              uuid primary key default gen_random_uuid(),
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
@@ -156,6 +179,7 @@ create table public.product_variants (
   external_refs   jsonb not null default '{}'::jsonb,
   our_price       numeric(10,2) check (our_price is null or our_price >= 0),
   cost_price      numeric(10,2) check (cost_price is null or cost_price >= 0),
+  map_price       numeric(10,2) check (map_price is null or map_price >= 0),
   currency        text not null default 'EUR',
   is_default      boolean not null default false,
   active          boolean not null default true,
@@ -218,8 +242,9 @@ create table public.repricing_rules (
   id              uuid primary key default gen_random_uuid(),
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
   name            text not null,
-  strategy        text not null check (strategy in ('match_lowest','beat_percent')),
+  strategy        text not null check (strategy in ('match_lowest','beat_percent','stay_above_percent')),
   beat_by_pct     numeric(6,2) not null default 0 check (beat_by_pct between 0 and 50),
+  competitor_ids  uuid[],
   min_margin_pct  numeric(6,2) not null check (min_margin_pct between 0 and 500),
   approval_mode   text not null default 'manual'
                     check (approval_mode in ('manual','automatic')),
@@ -230,7 +255,7 @@ create table public.repricing_rules (
   variant_id      uuid references public.product_variants(id) on delete cascade,
   active          boolean not null default true,
   created_at      timestamptz not null default now(),
-  check (strategy = 'beat_percent' or beat_by_pct = 0)
+  check (strategy in ('beat_percent','stay_above_percent') or beat_by_pct = 0)
 );
 
 create table public.reprice_suggestions (
@@ -311,7 +336,7 @@ create table public.alerts (
   tenant_id             uuid not null references public.tenants(id) on delete cascade,
   product_id            uuid references public.products(id) on delete cascade,
   competitor_id         uuid references public.competitors(id) on delete cascade,
-  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs', 'out_of_stock', 'back_in_stock', 'undercut_abs', 'price_drop', 'price_rise', 'source_broken')),
+  condition             text not null check (condition in ('below_pct', 'above_pct', 'below_abs', 'above_abs', 'out_of_stock', 'back_in_stock', 'undercut_abs', 'price_drop', 'price_rise', 'source_broken', 'sale_started', 'sale_ended', 'map_violation')),
   threshold             numeric(10,2),
   threshold_unit        text not null default 'percent' check (threshold_unit in ('percent','absolute')),
   notify_email          text not null,
@@ -320,8 +345,8 @@ create table public.alerts (
   cooldown_h            int not null default 24 check (cooldown_h between 1 and 720),
   created_at            timestamptz not null default now(),
   check (
-    (condition in ('out_of_stock', 'back_in_stock') and threshold is null)
-    or (condition not in ('out_of_stock', 'back_in_stock') and threshold > 0)
+    (condition in ('out_of_stock', 'back_in_stock', 'sale_started', 'sale_ended', 'map_violation') and threshold is null)
+    or (condition not in ('out_of_stock', 'back_in_stock', 'sale_started', 'sale_ended', 'map_violation') and threshold > 0)
   )
 );
 
@@ -339,6 +364,24 @@ create table public.alert_events (
   trigger_reason        text,
   triggered_at          timestamptz not null default now()
 );
+
+create table if not exists public.map_violations (
+  id                    uuid primary key default gen_random_uuid(),
+  tenant_id             uuid not null references public.tenants(id) on delete cascade,
+  product_id            uuid not null references public.products(id) on delete cascade,
+  variant_id            uuid not null references public.product_variants(id) on delete cascade,
+  competitor_product_id uuid not null references public.competitor_products(id) on delete cascade,
+  snapshot_id           uuid references public.price_snapshots(id) on delete set null,
+  map_price             numeric(10,2) not null,
+  advertised_price      numeric(10,2) not null,
+  status                text not null default 'open'
+                          check (status in ('open','acknowledged','resolved')),
+  detected_at           timestamptz not null default now(),
+  resolved_at           timestamptz
+);
+
+create index if not exists idx_map_violations_tenant_status
+  on public.map_violations(tenant_id, status, detected_at desc);
 
 create table public.alert_digest_runs (
   id                    uuid primary key default gen_random_uuid(),
@@ -382,7 +425,7 @@ create index idx_api_keys_prefix
 create table public.alert_channels (
   id          uuid primary key default gen_random_uuid(),
   tenant_id   uuid not null references public.tenants(id) on delete cascade,
-  type        text not null check (type in ('email','webhook','slack')),
+  type        text not null check (type in ('email','webhook','slack','teams')),
   config      jsonb not null,
   active      boolean not null default true,
   created_at  timestamptz not null default now()
@@ -393,7 +436,7 @@ create table public.alert_channel_deliveries (
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
   alert_event_id  uuid references public.alert_events(id) on delete cascade,
   channel_id      uuid references public.alert_channels(id) on delete set null,
-  channel_type    text not null check (channel_type in ('email','webhook','slack')),
+  channel_type    text not null check (channel_type in ('email','webhook','slack','teams')),
   status          text not null default 'queued'
                     check (status in ('queued','running','succeeded','failed')),
   attempt_count   int not null default 0 check (attempt_count >= 0),
@@ -884,6 +927,42 @@ alter table public.scrape_failures
     foreign key (competitor_product_id, tenant_id)
     references public.competitor_products(id, tenant_id) on delete cascade;
 
+alter table public.product_variants
+  add column if not exists map_price numeric(10,2)
+  check (map_price is null or map_price >= 0);
+
+alter table public.repricing_rules
+  add column if not exists competitor_ids uuid[];
+alter table public.repricing_rules
+  drop constraint if exists repricing_rules_strategy_check;
+alter table public.repricing_rules
+  add constraint repricing_rules_strategy_check
+  check (strategy in ('match_lowest','beat_percent','stay_above_percent'));
+alter table public.repricing_rules
+  drop constraint if exists repricing_rules_check;
+alter table public.repricing_rules
+  add constraint repricing_rules_check
+  check (strategy in ('beat_percent','stay_above_percent') or beat_by_pct = 0);
+
+alter table public.alerts drop constraint if exists alerts_condition_check;
+alter table public.alerts add constraint alerts_condition_check
+  check (condition in ('below_pct','above_pct','below_abs','above_abs',
+    'out_of_stock','back_in_stock','undercut_abs','price_drop','price_rise',
+    'source_broken','sale_started','sale_ended','map_violation'));
+alter table public.alerts drop constraint if exists alerts_check;
+alter table public.alerts add constraint alerts_check
+  check (
+    (condition in ('out_of_stock','back_in_stock','sale_started','sale_ended','map_violation') and threshold is null)
+    or (condition not in ('out_of_stock','back_in_stock','sale_started','sale_ended','map_violation') and threshold > 0)
+  );
+
+alter table public.alert_channels drop constraint if exists alert_channels_type_check;
+alter table public.alert_channels add constraint alert_channels_type_check
+  check (type in ('email','webhook','slack','teams'));
+alter table public.alert_channel_deliveries drop constraint if exists alert_channel_deliveries_channel_type_check;
+alter table public.alert_channel_deliveries add constraint alert_channel_deliveries_channel_type_check
+  check (channel_type in ('email','webhook','slack','teams'));
+
 alter table public.tenants             enable row level security;
 alter table public.competitors         enable row level security;
 alter table public.products            enable row level security;
@@ -896,12 +975,14 @@ alter table public.product_insights    enable row level security;
 alter table public.price_snapshots     enable row level security;
 alter table public.alerts              enable row level security;
 alter table public.alert_events        enable row level security;
+alter table public.map_violations      enable row level security;
 alter table public.alert_digest_runs   enable row level security;
 alter table public.scrape_failures     enable row level security;
 alter table public.api_keys            enable row level security;
 alter table public.alert_channels      enable row level security;
 alter table public.team_members        enable row level security;
 alter table public.billing_orders      enable row level security;
+alter table public.subscriptions       enable row level security;
 alter table public.billing_invoices    enable row level security;
 alter table public.connector_sources   enable row level security;
 alter table public.audit_events        enable row level security;
@@ -1041,6 +1122,10 @@ create policy "alert_events: own tenant" on public.alert_events
   for all using (tenant_id = public.my_tenant_id())
   with check (tenant_id = public.my_tenant_id());
 
+create policy "map_violations: own tenant" on public.map_violations
+  for all using (tenant_id = public.my_tenant_id())
+  with check (tenant_id = public.my_tenant_id());
+
 create policy "alert_digest_runs: tenant read" on public.alert_digest_runs
   for select using (tenant_id = public.my_tenant_id());
 
@@ -1151,6 +1236,7 @@ select distinct on (cp.id)
   pv.name                 as variant_name,
   pv.sku                  as variant_sku,
   pv.gtin                 as variant_gtin,
+  pv.map_price,
   pv.our_price,
   pv.currency             as our_currency,
   c.shop_name             as competitor_shop,
@@ -1186,6 +1272,7 @@ grant select, insert, update, delete on public.tenants, public.competitors,
   public.alerts to authenticated;
 grant select on public.product_insights to authenticated;
 grant select on public.price_snapshots, public.alert_events, public.v_latest_prices to authenticated;
+grant select, update (status, resolved_at) on public.map_violations to authenticated;
 grant select on public.alert_digest_runs to authenticated;
 grant select on public.alert_channel_deliveries to authenticated;
 grant select on public.scrape_failures to authenticated;
@@ -1213,6 +1300,15 @@ create policy "billing_orders: tenant owner read" on public.billing_orders
     and exists (
       select 1 from public.tenants
       where tenants.id = billing_orders.tenant_id
+        and tenants.user_id = auth.uid()
+    )
+  );
+create policy "subscriptions: tenant owner read" on public.subscriptions
+  for select using (
+    tenant_id = public.my_tenant_id()
+    and exists (
+      select 1 from public.tenants
+      where tenants.id = subscriptions.tenant_id
         and tenants.user_id = auth.uid()
     )
   );
@@ -1256,6 +1352,7 @@ create policy "billing_orders: tenant owner insert" on public.billing_orders
     )
   );
 grant select on public.billing_orders to authenticated;
+grant select on public.subscriptions to authenticated;
 grant select on public.billing_invoices to authenticated;
 grant select on public.billing_adjustments to authenticated;
 grant select, insert (tenant_id, tenant_reference, invoice_id, requested_by, amount_cents, reason, idempotency_key)
@@ -1271,7 +1368,7 @@ grant all on public.tenants, public.competitors, public.products,
   public.repricing_rules, public.reprice_suggestions,
   public.product_insights,
   public.price_snapshots, public.alerts,
-  public.alert_events, public.alert_digest_runs, public.scrape_failures, public.api_keys,
+  public.alert_events, public.map_violations, public.alert_digest_runs, public.scrape_failures, public.api_keys,
   public.alert_channels, public.team_members, public.connector_sources,
   public.audit_events, public.scrape_jobs, public.report_schedules,
   public.report_runs, public.connector_sync_runs, public.alert_channel_deliveries,
@@ -1286,6 +1383,7 @@ grant all on public.billing_refund_requests, public.public_incidents,
 grant all on public.source_repair_assignments to service_role;
 grant all on public.support_tickets to service_role;
 grant all on public.billing_orders to service_role;
+grant all on public.subscriptions to service_role;
 grant all on public.billing_invoices to service_role;
 
 notify pgrst, 'reload schema';

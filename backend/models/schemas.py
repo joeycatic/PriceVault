@@ -42,6 +42,11 @@ class MatchSuggestionGenerateMissingRequest(APIModel):
     limit: int = Field(default=10, ge=1, le=25)
 
 
+class MatchSuggestionGenerateCatalogRequest(APIModel):
+    competitor_ids: list[str] | None = None
+    limit: int | None = Field(default=None, ge=1)
+
+
 class CompetitorCreate(APIModel):
     shop_name: str = Field(min_length=1)
     base_url: HttpUrl
@@ -87,6 +92,7 @@ class ProductVariantCreate(APIModel):
     attributes: dict[str, str] = Field(default_factory=dict)
     our_price: float | None = Field(default=None, ge=0)
     cost_price: float | None = Field(default=None, ge=0)
+    map_price: float | None = Field(default=None, ge=0)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     is_default: bool = False
 
@@ -98,6 +104,7 @@ class ProductVariantUpdate(APIModel):
     attributes: dict[str, str] | None = None
     our_price: float | None = Field(default=None, ge=0)
     cost_price: float | None = Field(default=None, ge=0)
+    map_price: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     is_default: bool | None = None
     active: bool | None = None
@@ -126,7 +133,7 @@ class ProductMappingRepair(APIModel):
 
 class RepricingRuleCreate(APIModel):
     name: str = Field(min_length=1, max_length=120)
-    strategy: Literal["match_lowest", "beat_percent"]
+    strategy: Literal["match_lowest", "beat_percent", "stay_above_percent"]
     beat_by_pct: float = Field(default=0, ge=0, le=50)
     min_margin_pct: float = Field(ge=0, le=500)
     approval_mode: Literal["manual", "automatic"] = "manual"
@@ -134,16 +141,18 @@ class RepricingRuleCreate(APIModel):
     require_healthy_sources: bool = True
     product_id: str | None = None
     variant_id: str | None = None
+    competitor_ids: list[str] | None = None
 
 
 class RepricingRuleUpdate(APIModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    strategy: Literal["match_lowest", "beat_percent"] | None = None
+    strategy: Literal["match_lowest", "beat_percent", "stay_above_percent"] | None = None
     beat_by_pct: float | None = Field(default=None, ge=0, le=50)
     min_margin_pct: float | None = Field(default=None, ge=0, le=500)
     approval_mode: Literal["manual", "automatic"] | None = None
     max_change_pct: float | None = Field(default=None, ge=0.1, le=100)
     require_healthy_sources: bool | None = None
+    competitor_ids: list[str] | None = None
     active: bool | None = None
 
 
@@ -158,6 +167,9 @@ AlertCondition = Literal[
     "price_drop",
     "price_rise",
     "source_broken",
+    "sale_started",
+    "sale_ended",
+    "map_violation",
 ]
 
 
@@ -298,7 +310,7 @@ class APIKeyCreate(APIModel):
 
 
 class AlertChannelCreate(APIModel):
-    type: Literal["webhook", "slack"]
+    type: Literal["webhook", "slack", "teams"]
     config: dict[str, Any]
 
 
@@ -309,6 +321,10 @@ class AlertChannelUpdate(APIModel):
 
 class AlertChannelTestRequest(APIModel):
     channel_id: str
+
+
+class MapViolationUpdate(APIModel):
+    status: Literal["acknowledged", "resolved"]
 
 
 TeamRole = Literal["owner", "admin", "analyst", "viewer", "billing", "member"]
