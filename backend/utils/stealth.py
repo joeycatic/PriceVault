@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+from typing import Literal
 
 from playwright.async_api import Page, Playwright
 from playwright_stealth import Stealth
@@ -35,10 +36,16 @@ async def get_stealth_page(playwright: Playwright) -> Page:
     return page
 
 
-async def navigate_stealth(page: Page, url: str) -> None:
-    """Apply a human-like pause before a network-idle navigation."""
+async def navigate_stealth(
+    page: Page,
+    url: str,
+    *,
+    wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "networkidle",
+    timeout_ms: int = 45_000,
+) -> None:
+    """Apply a human-like pause before navigating to the requested readiness state."""
     await asyncio.sleep(random.uniform(1, 3))
-    await page.goto(url, wait_until="networkidle", timeout=45_000)
+    await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
 
 
 async def close_stealth_page(page: Page) -> None:

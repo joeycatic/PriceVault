@@ -1,8 +1,9 @@
 """Stealth product URL discovery with fuzzy title ranking."""
 
 import asyncio
+import re
 from dataclasses import dataclass
-from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 
 from playwright.async_api import Page, async_playwright
 from rapidfuzz.fuzz import token_sort_ratio
@@ -14,6 +15,54 @@ from utils.stealth import close_stealth_page, get_stealth_page, navigate_stealth
 
 
 logger = get_logger("matcher_agent")
+
+
+NON_PRODUCT_PATH_TOKENS = {
+    "about",
+    "account",
+    "agb",
+    "blog",
+    "brands",
+    "cart",
+    "category",
+    "categories",
+    "checkout",
+    "collection",
+    "collections",
+    "contact",
+    "cookie",
+    "cookies",
+    "datenschutz",
+    "faq",
+    "impressum",
+    "kategorie",
+    "kategorien",
+    "kontakt",
+    "legal",
+    "login",
+    "logout",
+    "marken",
+    "newsletter",
+    "payment",
+    "privacy",
+    "register",
+    "registrieren",
+    "retoure",
+    "retouren",
+    "returns",
+    "rueckgabe",
+    "search",
+    "shipping",
+    "sitemap",
+    "suche",
+    "terms",
+    "ueber",
+    "versand",
+    "warenkorb",
+    "widerruf",
+    "wishlist",
+}
+MIN_FUZZY_CONFIDENCE = 0.55
 
 
 @dataclass
@@ -34,14 +83,27 @@ class MatchCandidate:
 class MatcherAgent:
     """Find likely product pages without creating mappings."""
 
+    @staticmethod
+    def _is_product_candidate_url(url: str) -> bool:
+        path = unquote(urlparse(url).path).lower().translate(
+            str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+        )
+        tokens = set(re.findall(r"[a-z0-9]+", path))
+        return not tokens.intersection(NON_PRODUCT_PATH_TOKENS)
+
     async def _extract_links(self, page: Page, base_url: str) -> list[tuple[str, str]]:
         base_host = urlparse(base_url).netloc.removeprefix("www.")
         links: list[tuple[str, str]] = []
         anchors = page.locator("a[href]")
-        for index in range(min(await anchors.count(), 150)):
-            anchor = anchors.nth(index)
-            href = await anchor.get_attribute("href")
-            title = (await anchor.inner_text()).strip()
+        raw_links = await anchors.evaluate_all(
+            """elements => elements.slice(0, 150).map(element => ({
+                href: element.getAttribute('href'),
+                title: (element.textContent || '').trim(),
+            }))"""
+        )
+        for item in raw_links:
+            href = item.get("href")
+            title = item.get("title", "")
             if not href or not title:
                 continue
             parsed_href = urlparse(href)
@@ -84,7 +146,13 @@ class MatcherAgent:
                         + "/search?q="
                         + quote_plus(query)
                     )
-                    await navigate_stealth(page, internal_url)
+                    await navigate_stealth(
+                        page,
+                        internal_url,
+                        wait_until="domcontentloaded",
+                        timeout_ms=25_000,
+                    )
+                    await page.wait_for_timeout(1_000)
                     browser_links = await self._extract_links(page, request.competitor_base_url)
         except Exception as exc:
             logger.warning(
@@ -110,13 +178,15 @@ class MatcherAgent:
             deduplicated.setdefault(url, title)
         candidates = []
         for url, title in deduplicated.items():
+            if not self._is_product_candidate_url(url):
+                continue
             exact_gtin = bool(request.gtin and request.gtin in f"{url} {title}")
             title_score = token_sort_ratio(request.product_name, title) / 100
             path_score = token_sort_ratio(
                 request.product_name, urlparse(url).path.replace("-", " ")
             ) / 100
             confidence = 1.0 if exact_gtin else max(title_score, path_score)
-            if confidence < 0.35:
+            if confidence < MIN_FUZZY_CONFIDENCE:
                 continue
             candidates.append(
                 MatchCandidate(url=url, title=title, confidence=round(confidence, 3))

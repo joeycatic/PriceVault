@@ -91,6 +91,7 @@ def test_openapi_contains_phase_routes():
         "/products/discover",
         "/competitors/recommendations",
         "/match/suggestions/generate-missing",
+        "/match/suggestions/generate-catalog",
     ):
         assert path in paths
 
@@ -889,7 +890,7 @@ def test_public_catalog_rejects_private_destinations():
             raise AssertionError(f"private catalog URL accepted: {value}")
 
 
-def test_matcher_ranks_product_title_above_navigation_links():
+def test_matcher_excludes_unrelated_navigation_and_category_links():
     from agents.matcher_agent import MatcherAgent, MatchRequest
 
     request = MatchRequest("Rezin 1 Liter", "competitor-1", "https://shop.example")
@@ -899,11 +900,35 @@ def test_matcher_ranks_product_title_above_navigation_links():
             ("https://shop.example/heizer", "Heizer"),
             ("https://shop.example/Green-Planet-Rizen-1-Liter", "Green Planet Rezin 1 Liter"),
             ("https://shop.example/registrieren", "Jetzt registrieren!"),
+            ("https://shop.example/kategorie/duenger", "Rezin und weitere Dünger"),
+            ("https://shop.example/impressum", "Rezin Anbieter Impressum"),
         ],
     )
 
-    assert candidates[0].title == "Green Planet Rezin 1 Liter"
-    assert candidates[0].confidence > candidates[1].confidence
+    assert [(candidate.url, candidate.title) for candidate in candidates] == [
+        (
+            "https://shop.example/Green-Planet-Rizen-1-Liter",
+            "Green Planet Rezin 1 Liter",
+        )
+    ]
+
+
+def test_matcher_keeps_exact_gtin_product_match():
+    from agents.matcher_agent import MatcherAgent, MatchRequest
+
+    request = MatchRequest(
+        "Grow Lampe",
+        "competitor-1",
+        "https://shop.example",
+        gtin="1234567890123",
+    )
+    candidates = MatcherAgent()._rank(
+        request,
+        [("https://shop.example/p/sku-42", "Artikel 1234567890123")],
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].confidence == 1.0
 
 
 def test_automatic_repricing_guards_large_changes_and_source_health():
@@ -4880,34 +4905,18 @@ def test_snapshot_routes_use_tenant_and_bounded_history_window(monkeypatch):
 def test_matcher_extracts_relative_and_google_redirect_links():
     from agents.matcher_agent import MatcherAgent
 
-    class FakeAnchor:
-        def __init__(self, href, title):
-            self.href = href
-            self.title = title
-
-        async def get_attribute(self, name):
-            assert name == "href"
-            return self.href
-
-        async def inner_text(self):
-            return self.title
-
     class FakeAnchors:
-        def __init__(self):
-            self.values = [
-                FakeAnchor("/produkte/lampe#details", "  Lampe   Pro  "),
-                FakeAnchor(
-                    "/url?q=https%3A%2F%2Fshop.example%2Fprodukte%2Flampe-2&sa=U",
-                    "Lampe 2",
-                ),
-                FakeAnchor("https://other.example/lampe", "Fremder Shop"),
+        @staticmethod
+        async def evaluate_all(script):
+            assert "slice(0, 150)" in script
+            return [
+                {"href": "/produkte/lampe#details", "title": "  Lampe   Pro  "},
+                {
+                    "href": "/url?q=https%3A%2F%2Fshop.example%2Fprodukte%2Flampe-2&sa=U",
+                    "title": "Lampe 2",
+                },
+                {"href": "https://other.example/lampe", "title": "Fremder Shop"},
             ]
-
-        async def count(self):
-            return len(self.values)
-
-        def nth(self, index):
-            return self.values[index]
 
     class FakePage:
         @staticmethod
