@@ -3,6 +3,7 @@
 import asyncio
 import os
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import sentry_sdk
@@ -17,7 +18,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from db.client import check_supabase_admin_connection
 from jobs.worker_status import worker_autoscaling_signals
 from middleware.rate_limit import TenantPlanRateLimitMiddleware, limiter
-from routers import admin, alert_channels, alerts, api_keys, billing, competitors, export, integrations, onboarding, privacy, products, public, repricing, reports, scrape, settings, snapshots, sources as source_validation, team, usage, webhooks
+from routers import admin, alert_channels, alerts, api_keys, benchmark, billing, competitors, export, integrations, map_compliance, onboarding, privacy, products, public, repricing, reports, scrape, settings, snapshots, sources as source_validation, team, usage, webhooks
 from routers.connectors import shopify, sources
 from utils.logger import configure_logging, get_logger
 
@@ -45,6 +46,8 @@ app.include_router(scrape.router)
 app.include_router(competitors.router)
 app.include_router(products.router)
 app.include_router(repricing.router)
+app.include_router(benchmark.router)
+app.include_router(map_compliance.router)
 app.include_router(snapshots.router)
 app.include_router(alerts.router)
 app.include_router(onboarding.router)
@@ -122,6 +125,26 @@ async def _check_worker_queue() -> dict[str, float | int | str]:
         await redis.aclose()
 
 
+async def _check_scheduler_liveness() -> dict[str, str | float]:
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        raise RuntimeError("REDIS_URL is not configured")
+    redis = await create_pool(RedisSettings.from_dsn(redis_url))
+    try:
+        value = await redis.get("pricevault:scheduler:heartbeat")
+        if not value:
+            raise RuntimeError("scheduler heartbeat is missing")
+        observed = value.decode() if isinstance(value, bytes) else str(value)
+        observed_at = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        age_seconds = (datetime.now(timezone.utc) - observed_at).total_seconds()
+        max_age = int(os.environ.get("SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS", "180"))
+        if age_seconds > max_age:
+            raise RuntimeError("scheduler heartbeat is stale")
+        return {"last_seen_at": observed, "age_seconds": round(age_seconds, 1)}
+    finally:
+        await redis.aclose()
+
+
 @app.get("/health", tags=["system"])
 async def health() -> dict[str, object]:
     checks: dict[str, object] = {}
@@ -129,6 +152,7 @@ async def health() -> dict[str, object]:
     for name, probe in (
         ("database", _check_database),
         ("worker_queue", _check_worker_queue),
+        ("scheduler", _check_scheduler_liveness),
     ):
         try:
             result = await probe()

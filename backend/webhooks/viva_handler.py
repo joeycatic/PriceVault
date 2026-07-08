@@ -158,6 +158,26 @@ async def handle_viva_webhook(request: Request) -> dict[str, bool]:
                 "next_payment_retry_at": None,
             },
         )
+        await queries.upsert_subscription(
+            order["tenant_id"],
+            {
+                "plan": order["plan"],
+                "status": "active",
+                "current_period_end": next_month(now).isoformat(),
+                "viva_card_token": str(transaction_id),
+                "viva_source_code": source_code,
+                "cancel_at_period_end": False,
+                "cancellation_effective_at": None,
+                "failed_payment_count": 0,
+                "last_payment_error": None,
+                "next_payment_retry_at": None,
+                "metadata": {
+                    "provider": "viva",
+                    "initial_order_code": order["order_code"],
+                    "initial_transaction_id": str(transaction_id),
+                },
+            },
+        )
         with suppress(Exception):
             await queries.record_product_event(order["tenant_id"], "paid_conversion", order["plan"])
     return {"ok": True}

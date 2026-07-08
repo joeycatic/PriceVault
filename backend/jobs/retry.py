@@ -17,11 +17,42 @@ MAX_ATTEMPTS = int(os.environ.get("SCRAPE_MAX_ATTEMPTS", "3"))
 ALERT_EMAIL = os.environ.get("OPS_ALERT_EMAIL", "ops@pricevault.de")
 RETRY_BASE_SECONDS = int(os.environ.get("SCRAPE_RETRY_BASE_SECONDS", "5"))
 RETRY_MAX_SECONDS = int(os.environ.get("SCRAPE_RETRY_MAX_SECONDS", "300"))
+TRANSIENT_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "net::",
+    "econn",
+    "connection",
+    "temporarily",
+    "too many requests",
+    "rate limit",
+    "browserless",
+    "target closed",
+    "navigation",
+)
+PERMANENT_ERROR_MARKERS = (
+    "strict mode violation",
+    "selector",
+    "no price found",
+    "could not parse",
+    "invalid url",
+    "permissionerror",
+    "nicht freigegeben",
+    "währung",
+    "currency",
+)
 
 
 def retry_delay(attempt: int) -> int:
     """Return the capped exponential delay before the next attempt."""
     return min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)))
+
+
+def is_transient_scrape_error(error: str) -> bool:
+    normalized = error.casefold()
+    if any(marker in normalized for marker in PERMANENT_ERROR_MARKERS):
+        return False
+    return any(marker in normalized for marker in TRANSIENT_ERROR_MARKERS)
 
 
 async def send_to_dlq(
@@ -88,7 +119,7 @@ async def maybe_retry_or_dlq(
     competitor_product_id: str | None = None,
 ) -> None:
     attempt = int(ctx.get("job_try") or 1)
-    if attempt >= MAX_ATTEMPTS:
+    if not is_transient_scrape_error(error) or attempt >= MAX_ATTEMPTS:
         await send_to_dlq(
             ctx,
             product_id=product_id,

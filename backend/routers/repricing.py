@@ -23,6 +23,15 @@ def _assert_automatic_plan(tenant: dict, approval_mode: str | None) -> None:
         )
 
 
+async def _assert_competitor_scope(tenant_id: str, competitor_ids: list[str] | None) -> None:
+    if not competitor_ids:
+        return
+    known = {competitor["id"] for competitor in await queries.list_competitors(tenant_id)}
+    unknown = set(competitor_ids) - known
+    if unknown:
+        raise HTTPException(status_code=404, detail="Mitbewerber nicht gefunden")
+
+
 @router.get("/rules")
 async def list_rules(tenant_id: str = Depends(get_tenant)) -> list[dict]:
     return await queries.list_repricing_rules(tenant_id)
@@ -41,6 +50,7 @@ async def create_rule(
         variant = await queries.get_product_variant(tenant_id, body.variant_id)
         if not variant or (body.product_id and variant["product_id"] != body.product_id):
             raise HTTPException(status_code=404, detail="Variante nicht gefunden")
+    await _assert_competitor_scope(tenant_id, body.competitor_ids)
     values = body.model_dump(mode="json")
     if body.strategy == "match_lowest":
         values["beat_by_pct"] = 0
@@ -62,6 +72,7 @@ async def update_rule(
 ) -> dict:
     values = body.model_dump(exclude_unset=True, mode="json")
     _assert_automatic_plan(tenant, body.approval_mode)
+    await _assert_competitor_scope(tenant["id"], body.competitor_ids)
     if body.strategy == "match_lowest":
         values["beat_by_pct"] = 0
     rule = await queries.update_repricing_rule(tenant["id"], rule_id, values)

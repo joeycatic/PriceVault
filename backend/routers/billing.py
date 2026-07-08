@@ -170,6 +170,22 @@ async def cancel_subscription(tenant: dict = Depends(require_owner)) -> dict[str
             "billing_status_metadata": {"cancel_requested": True},
         },
     )
+    await queries.upsert_subscription(
+        tenant["id"],
+        {
+            "plan": tenant.get("subscription_plan") or tenant.get("plan"),
+            "status": "active",
+            "current_period_end": tenant.get("subscription_current_period_end"),
+            "viva_card_token": tenant.get("viva_initial_transaction_id"),
+            "viva_source_code": tenant.get("viva_source_code"),
+            "cancel_at_period_end": True,
+            "cancellation_effective_at": tenant.get("subscription_current_period_end"),
+            "failed_payment_count": tenant.get("failed_payment_count") or 0,
+            "last_payment_error": tenant.get("last_payment_error"),
+            "next_payment_retry_at": tenant.get("next_payment_retry_at"),
+            "metadata": {"cancel_requested": True},
+        },
+    )
     with suppress(Exception):
         await queries.record_product_event(tenant["id"], "cancellation", tenant.get("plan"))
     return {"canceled": True}

@@ -66,17 +66,27 @@ async def enqueue_due_viva_renewals(ctx: dict) -> int:
         subscriptions = await queries.list_due_viva_subscriptions(now.isoformat())
         ended = await queries.list_ended_viva_subscriptions(now.isoformat())
         for subscription in ended:
-                await queries.update_tenant(
-                    subscription["id"],
-                    {
-                        "plan": "free",
-                        "subscription_plan": None,
-                        "subscription_current_period_end": None,
-                        "subscription_cancel_at_period_end": False,
-                        "cancellation_effective_at": None,
-                        "subscription_status": "canceled",
-                    },
-                )
+            await queries.update_tenant(
+                subscription["id"],
+                {
+                    "plan": "free",
+                    "subscription_plan": None,
+                    "subscription_current_period_end": None,
+                    "subscription_cancel_at_period_end": False,
+                    "cancellation_effective_at": None,
+                    "subscription_status": "canceled",
+                },
+            )
+            await queries.upsert_subscription(
+                subscription["id"],
+                {
+                    "plan": None,
+                    "status": "canceled",
+                    "current_period_end": None,
+                    "cancel_at_period_end": False,
+                    "cancellation_effective_at": None,
+                },
+            )
     queued = 0
     for subscription in subscriptions:
         period = str(subscription["subscription_current_period_end"])[:10]
@@ -143,11 +153,37 @@ async def renew_viva_subscription(
                         "next_payment_retry_at": None,
                     },
                 )
+                await queries.upsert_subscription(
+                    tenant_id,
+                    {
+                        "plan": plan,
+                        "status": "past_due",
+                        "current_period_end": period,
+                        "viva_card_token": initial_transaction_id,
+                        "viva_source_code": source_code,
+                        "failed_payment_count": attempt,
+                        "last_payment_error": str(exc)[:1000],
+                        "next_payment_retry_at": None,
+                    },
+                )
         else:
             with supabase_context(admin=True):
                 await queries.update_tenant(
                     tenant_id,
                     {
+                        "failed_payment_count": attempt,
+                        "last_payment_error": str(exc)[:1000],
+                        "next_payment_retry_at": retry_iso,
+                    },
+                )
+                await queries.upsert_subscription(
+                    tenant_id,
+                    {
+                        "plan": plan,
+                        "status": "active",
+                        "current_period_end": period,
+                        "viva_card_token": initial_transaction_id,
+                        "viva_source_code": source_code,
                         "failed_payment_count": attempt,
                         "last_payment_error": str(exc)[:1000],
                         "next_payment_retry_at": retry_iso,
@@ -193,6 +229,22 @@ async def renew_viva_subscription(
                 "failed_payment_count": 0,
                 "last_payment_error": None,
                 "next_payment_retry_at": None,
+            },
+        )
+        await queries.upsert_subscription(
+            tenant_id,
+            {
+                "plan": plan,
+                "status": "active",
+                "current_period_end": next_month(now).isoformat(),
+                "viva_card_token": initial_transaction_id,
+                "viva_source_code": source_code,
+                "cancel_at_period_end": False,
+                "cancellation_effective_at": None,
+                "failed_payment_count": 0,
+                "last_payment_error": None,
+                "next_payment_retry_at": None,
+                "metadata": {"provider": "viva", "renewal_transaction_id": transaction_id},
             },
         )
     return {"transaction_id": transaction_id}

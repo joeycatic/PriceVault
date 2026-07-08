@@ -57,10 +57,35 @@ def calculate_suggested_price(
     target = lowest
     if strategy == "beat_percent":
         target = lowest * (Decimal("1") - Decimal(str(beat_by_pct)) / Decimal("100"))
+    if strategy == "stay_above_percent":
+        target = lowest * (Decimal("1") + Decimal(str(beat_by_pct)) / Decimal("100"))
     return (
         float(max(target, floor).quantize(CENT, rounding=ROUND_HALF_UP)),
         float(floor.quantize(CENT, rounding=ROUND_HALF_UP)),
     )
+
+
+def scoped_competitor_prices(
+    rows: list[dict[str, Any]], competitor_ids: list[str] | None
+) -> list[float]:
+    """Prices eligible for a rule; None/empty scope means all competitors."""
+    return [
+        float(row["competitor_price"])
+        for row in rows
+        if row.get("competitor_price") is not None
+        and (not competitor_ids or row.get("competitor_id") in competitor_ids)
+    ]
+
+
+def scoped_competitor_evidence(
+    rows: list[dict[str, Any]], competitor_ids: list[str] | None
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("competitor_price") is not None
+        and (not competitor_ids or row.get("competitor_id") in competitor_ids)
+    ]
 
 
 class RepricingAgent:
@@ -70,20 +95,11 @@ class RepricingAgent:
         rules = await queries.list_repricing_rules(tenant_id, active_only=True)
         variants = await queries.list_product_variants(tenant_id, active_only=True)
         prices = await queries.get_latest_prices(tenant_id)
-        price_by_variant: dict[str, list[float]] = {}
-        healthy_by_variant: dict[str, bool] = {}
         evidence_by_variant: dict[str, list[dict[str, Any]]] = {}
         for row in prices:
             variant_id = row["variant_id"]
-            healthy_by_variant[variant_id] = (
-                healthy_by_variant.get(variant_id, True)
-                and row.get("health_status") == "healthy"
-            )
             if row.get("competitor_price") is not None:
                 evidence_by_variant.setdefault(variant_id, []).append(row)
-                price_by_variant.setdefault(variant_id, []).append(
-                    float(row["competitor_price"])
-                )
 
         rules.sort(
             key=lambda rule: 2 if rule.get("variant_id") else 1 if rule.get("product_id") else 0,
@@ -116,7 +132,14 @@ class RepricingAgent:
             if variant.get("cost_price") is None:
                 skipped_missing_cost += 1
                 continue
-            competitor_prices = price_by_variant.get(variant["id"], [])
+            evidence = scoped_competitor_evidence(
+                evidence_by_variant.get(variant["id"], []),
+                rule.get("competitor_ids"),
+            )
+            competitor_prices = scoped_competitor_prices(
+                evidence_by_variant.get(variant["id"], []),
+                rule.get("competitor_ids"),
+            )
             if not competitor_prices:
                 skipped_no_price += 1
                 continue
@@ -144,7 +167,7 @@ class RepricingAgent:
                     "writeback_error": None,
                     "evidence_snapshot_ids": [
                         row["snapshot_id"]
-                        for row in evidence_by_variant.get(variant["id"], [])
+                        for row in evidence
                         if row.get("snapshot_id")
                     ],
                 },
@@ -179,7 +202,6 @@ class RepricingAgent:
                 )
                 auto_blocked += 1
                 continue
-            evidence = evidence_by_variant.get(variant["id"], [])
             now = datetime.now(timezone.utc)
             evidence_fresh = bool(evidence) and all(
                 now - datetime.fromisoformat(str(row["scraped_at"]).replace("Z", "+00:00"))
@@ -195,7 +217,8 @@ class RepricingAgent:
                 current_price=float(variant["our_price"]) if variant.get("our_price") is not None else None,
                 suggested_price=suggested,
                 max_change_pct=float(rule.get("max_change_pct") or 10),
-                sources_healthy=healthy_by_variant.get(variant["id"], False),
+                sources_healthy=bool(evidence)
+                and all(row.get("health_status") == "healthy" for row in evidence),
                 require_healthy_sources=rule.get("require_healthy_sources", True),
                 evidence_valid=bool(evidence) and all(row.get("validation_state") == "valid" for row in evidence),
                 evidence_fresh=evidence_fresh,

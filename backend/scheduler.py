@@ -3,6 +3,7 @@
 import asyncio
 import os
 import signal
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from arq import create_pool
@@ -12,6 +13,7 @@ from db import queries
 from db.client import supabase_context
 from jobs.billing_tasks import enqueue_due_viva_renewals, reconcile_viva_day
 from jobs.digest_tasks import enqueue_due_alert_digests
+from jobs.operator_tasks import send_daily_operator_summary
 from jobs.cost_tasks import summarize_operational_costs
 from jobs.capacity_tasks import evaluate_capacity
 from jobs.report_tasks import enqueue_due_reports
@@ -36,6 +38,14 @@ async def _run_job(name: str, function, redis) -> None:
         logger.info("scheduled_dispatch_complete", action=name, result=result)
     except Exception as exc:
         logger.exception("scheduled_dispatch_failed", action=name, error=str(exc))
+
+
+async def _heartbeat(redis) -> None:
+    await redis.set(
+        "pricevault:scheduler:heartbeat",
+        datetime.now(timezone.utc).isoformat(),
+        ex=600,
+    )
 
 
 async def enqueue_all_scrapes(redis_url: str) -> int:
@@ -63,6 +73,16 @@ async def enqueue_all_scrapes(redis_url: str) -> int:
 async def run_scheduler() -> None:
     redis = await create_pool(redis_settings())
     scheduler = AsyncIOScheduler(timezone="UTC")
+    await _heartbeat(redis)
+    scheduler.add_job(
+        _heartbeat,
+        "interval",
+        seconds=60,
+        args=(redis,),
+        id="scheduler-heartbeat",
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.add_job(
         _run_job,
         "interval",
@@ -79,6 +99,16 @@ async def run_scheduler() -> None:
         minute=15,
         args=("cost_summaries", summarize_operational_costs, redis),
         id="cost-summaries",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _run_job,
+        "cron",
+        hour=5,
+        minute=45,
+        args=("operator_daily_summary", send_daily_operator_summary, redis),
+        id="operator-daily-summary",
         coalesce=True,
         max_instances=1,
     )

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from auth.dependencies import get_current_tenant
-from auth.plan_guard import assert_plan_capacity
+from auth.plan_guard import PLAN_RANK, assert_plan_capacity
 from db import queries
 from models.schemas import AlertCreate, AlertUpdate
 from routers import get_tenant
@@ -12,7 +12,25 @@ from routers import get_tenant
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-STOCK_CONDITIONS = {"out_of_stock", "back_in_stock"}
+STOCK_CONDITIONS = {"out_of_stock", "back_in_stock", "sale_started", "sale_ended", "map_violation"}
+ADVANCED_CONDITIONS = {
+    "back_in_stock",
+    "undercut_abs",
+    "price_drop",
+    "price_rise",
+    "source_broken",
+    "sale_started",
+    "sale_ended",
+    "map_violation",
+}
+
+
+def _assert_alert_plan(plan: str | None, condition: str | None) -> None:
+    if condition in ADVANCED_CONDITIONS and PLAN_RANK.get(plan or "free", 0) < PLAN_RANK["pro"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Erweiterte Alarmregeln sind ab dem Pro-Plan verfügbar",
+        )
 
 
 def _alert_values(body: AlertCreate | AlertUpdate, *, partial: bool = False) -> dict:
@@ -33,6 +51,7 @@ async def list_all(tenant_id: str = Depends(get_tenant)) -> list[dict]:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create(body: AlertCreate, tenant: dict = Depends(get_current_tenant)) -> dict:
     tenant_id = tenant["id"]
+    _assert_alert_plan(tenant.get("plan"), body.condition)
     if body.product_id and not await queries.get_product(tenant_id, body.product_id):
         raise HTTPException(status_code=404, detail="Produkt nicht gefunden")
     if body.competitor_id and not await queries.get_competitor(tenant_id, body.competitor_id):
@@ -44,12 +63,13 @@ async def create(body: AlertCreate, tenant: dict = Depends(get_current_tenant)) 
 
 @router.patch("/{alert_id}")
 async def update(alert_id: str, body: AlertUpdate, tenant_id: str = Depends(get_tenant)) -> dict:
+    tenant = await queries.get_tenant_by_id(tenant_id)
+    _assert_alert_plan(tenant.get("plan") if tenant else None, body.condition)
     if body.active is True:
         current = await queries.get_alert(tenant_id, alert_id)
         if not current:
             raise HTTPException(status_code=404, detail="Preisalarm nicht gefunden")
         if not current.get("active", True):
-            tenant = await queries.get_tenant_by_id(tenant_id)
             active_count = await queries.count_active_alerts(tenant_id)
             assert_plan_capacity(tenant.get("plan") if tenant else None, "alerts", active_count)
     alert = await queries.update_alert(tenant_id, alert_id, _alert_values(body, partial=True))

@@ -1,5 +1,6 @@
 """Alert channel CRUD endpoints."""
 
+import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/alert-channels", tags=["alert-channels"])
 
 def _public_channel(channel: dict) -> dict:
     channel_type = channel.get("type")
-    key = "webhook_url" if channel_type == "slack" else "url"
+    key = _config_key(channel_type)
     config = channel.get("config", {})
     value = config.get(key)
     if not isinstance(value, str):
@@ -36,14 +37,19 @@ def _public_channel(channel: dict) -> dict:
 
 
 def _config_key(channel_type: str) -> str:
-    return "webhook_url" if channel_type == "slack" else "url"
+    return "webhook_url" if channel_type in {"slack", "teams"} else "url"
 
 
 def _validate_config(channel_type: str, config: dict) -> str:
-    key = "webhook_url" if channel_type == "slack" else "url"
+    key = _config_key(channel_type)
     value = config.get(key)
     if not isinstance(value, str) or not value:
-        detail = "Slack-Webhook fehlt" if channel_type == "slack" else "Webhook-URL fehlt"
+        if channel_type == "slack":
+            detail = "Slack-Webhook fehlt"
+        elif channel_type == "teams":
+            detail = "Teams-Webhook fehlt"
+        else:
+            detail = "Webhook-URL fehlt"
         raise HTTPException(status_code=400, detail=detail)
     try:
         validate_delivery_url(value, slack=channel_type == "slack")
@@ -59,6 +65,14 @@ def _encrypted_config(channel_type: str, value: str) -> dict[str, str]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {f"{key}_ciphertext": encrypted}
+
+
+def _encrypted_signing_secret(secret: str) -> dict[str, str]:
+    try:
+        encrypted = encrypt_secret(secret)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"signing_secret_ciphertext": encrypted}
 
 
 @router.get("")
@@ -80,14 +94,22 @@ async def create(
     body: AlertChannelCreate, tenant: dict = Depends(require_plan_admin("pro"))
 ) -> dict:
     url = _validate_config(body.type, body.config)
+    config = _encrypted_config(body.type, url)
+    signing_secret: str | None = None
+    if body.type == "webhook":
+        signing_secret = secrets.token_hex(32)
+        config.update(_encrypted_signing_secret(signing_secret))
     channel = await queries.create_alert_channel(
         tenant["id"],
         {
             "type": body.type,
-            "config": _encrypted_config(body.type, url),
+            "config": config,
         },
     )
-    return _public_channel(channel)
+    response = _public_channel(channel)
+    if signing_secret:
+        response["signing_secret"] = signing_secret
+    return response
 
 
 @router.post("/{channel_id}/test")
@@ -133,7 +155,10 @@ async def update(
         if not existing:
             raise HTTPException(status_code=404, detail="Kanal nicht gefunden")
         url = _validate_config(existing["type"], body.config)
-        values["config"] = _encrypted_config(existing["type"], url)
+        next_config = _encrypted_config(existing["type"], url)
+        if existing["type"] == "webhook" and existing.get("config", {}).get("signing_secret_ciphertext"):
+            next_config["signing_secret_ciphertext"] = existing["config"]["signing_secret_ciphertext"]
+        values["config"] = next_config
     channel = await queries.update_alert_channel(
         tenant["id"], channel_id, values
     )

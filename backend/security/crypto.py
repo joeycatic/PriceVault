@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import hmac
 import os
 
 from cryptography.fernet import Fernet
@@ -25,3 +26,8 @@ def encrypt_secret(value: str) -> str:
 
 def decrypt_secret(value: str) -> str:
     return _fernet().decrypt(value.encode()).decode()
+
+
+def sign_webhook_payload(secret: str, timestamp: str, body: bytes) -> str:
+    message = timestamp.encode() + b"." + body
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
