@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
-import { Activity, ArrowRight, ExternalLink, Gauge, Globe2, Lightbulb, Plus, Radar, Search, ShieldCheck, Store, Trash2, WandSparkles } from 'lucide-react'
+import { Activity, ArrowRight, BarChart3, CheckCircle2, Clock3, ExternalLink, Gauge, Globe2, Lightbulb, Link2, ListChecks, Plus, Radar, Search, ShieldCheck, Store } from 'lucide-react'
 
 import { CompetitorForm } from '@/components/ui/CompetitorForm'
 import { PageHeader } from '@/components/ui/MerchantUI'
+import { MutationButton } from '@/components/ui/MutationButton'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { minimumScrapeFrequency, planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
@@ -14,6 +15,10 @@ type CompetitorSourceStatus = {
   competitor_id: string
   active: boolean
   health_status: 'healthy' | 'degraded' | 'broken'
+}
+
+type CompetitorSuggestionStatus = {
+  competitor_id: string
 }
 
 type CompetitorsPageProps = {
@@ -42,6 +47,14 @@ function recommendationHref(recommendation: StoreRecommendation) {
   return `/dashboard/competitors?${params.toString()}#new-competitor`
 }
 
+function hostFromUrl(value: string) {
+  try {
+    return new URL(value).host.replace(/^www\./, '')
+  } catch {
+    return value.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+  }
+}
+
 function StoreDiscoverySection({
   recommendations,
   unavailable,
@@ -51,26 +64,28 @@ function StoreDiscoverySection({
 }) {
   const visibleRecommendations = recommendations.slice(0, 6)
   return (
-    <section className="mb-6 overflow-hidden rounded-2xl border border-vault-700 bg-white shadow-[0_18px_50px_rgba(26,26,26,.10)]" aria-labelledby="store-discovery">
-      <div className="grid gap-px bg-vault-700 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.6fr)]">
+    <section className="mb-6 overflow-hidden rounded-lg border border-vault-700 bg-white shadow-panel" aria-labelledby="store-discovery">
+      <div className="grid gap-px bg-vault-700 lg:grid-cols-[minmax(280px,.72fr)_minmax(0,1.55fr)]">
         <div className="relative overflow-hidden bg-vault-100 p-5 text-white sm:p-6">
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-merchant-success via-white/50 to-vault-100" aria-hidden="true" />
-          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
-            <Lightbulb className="h-4 w-4" aria-hidden="true" />
-            Branchenradar
-          </p>
-          <h2 id="store-discovery" className="mt-3 text-2xl font-bold tracking-[-0.03em]">Passende Shops automatisch vorschlagen.</h2>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-white/65">
-            PriceVault nutzt Branche, Marktland und Produktbegriffe, um neue Wettbewerber vorzuschlagen. Nach dem Anlegen sucht der Produktfinder nach passenden Produktseiten; manuelle URLs bleiben als Override für verpasste Treffer.
-          </p>
-          <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
-            <div className="rounded-lg border border-white/10 bg-white/10 p-3">
-              <p className="font-mono text-lg font-semibold">{visibleRecommendations.length}</p>
-              <p className="mt-1 text-white/55">Shop-Kandidaten</p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-white/10 p-3">
-              <p className="font-mono text-lg font-semibold">Auto</p>
-              <p className="mt-1 text-white/55">Produktfinder</p>
+          <div className="absolute inset-x-0 bottom-0 h-20 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.10)_0,rgba(255,255,255,.10)_1px,transparent_1px,transparent_10px)]" aria-hidden="true" />
+          <div className="relative">
+            <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white/65">
+              <Lightbulb className="h-3.5 w-3.5" aria-hidden="true" />
+              Branchenradar
+            </p>
+            <h2 id="store-discovery" className="mt-4 max-w-sm text-2xl font-bold">Neue Shops als geprüfte Kandidaten.</h2>
+            <p className="mt-3 max-w-md text-sm leading-6 text-white/65">
+              Empfehlungen werden aus Branche, Markt und Produktbegriffen abgeleitet. Erst nach Freigabe werden daraus aktive Mitbewerber.
+            </p>
+            <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-white/10 bg-white/10 text-xs">
+              <div className="bg-white/10 p-3">
+                <p className="font-mono text-xl font-semibold">{visibleRecommendations.length}</p>
+                <p className="mt-1 text-white/55">Kandidaten</p>
+              </div>
+              <div className="bg-white/10 p-3">
+                <p className="font-mono text-xl font-semibold">Queue</p>
+                <p className="mt-1 text-white/55">nach Freigabe</p>
+              </div>
             </div>
           </div>
         </div>
@@ -78,7 +93,7 @@ function StoreDiscoverySection({
           {visibleRecommendations.length ? (
             <div className="grid gap-3 lg:grid-cols-3">
               {visibleRecommendations.map((recommendation) => (
-                <article key={recommendation.host} className="group flex min-h-56 flex-col justify-between rounded-xl border border-vault-700 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-merchant-success hover:shadow-[0_18px_38px_rgba(36,166,118,.14)]">
+                <article key={recommendation.host} className="group flex min-h-56 flex-col justify-between rounded-lg border border-vault-700 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-vault-500 hover:shadow-[0_18px_38px_rgba(26,26,26,.10)]">
                   <div>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -88,6 +103,9 @@ function StoreDiscoverySection({
                       <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
                         {Math.round(recommendation.confidence * 100)}%
                       </span>
+                    </div>
+                    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-vault-800" aria-hidden="true">
+                      <div className="h-full rounded-full bg-merchant-success" style={{ width: `${Math.round(recommendation.confidence * 100)}%` }} />
                     </div>
                     <p className="mt-4 text-xs leading-5 text-vault-500">{recommendation.reasons.join(' · ')}</p>
                   </div>
@@ -105,7 +123,7 @@ function StoreDiscoverySection({
               ))}
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-vault-700 bg-white p-6 text-sm leading-6 text-vault-500">
+            <div className="rounded-lg border border-dashed border-vault-700 bg-white p-6 text-sm leading-6 text-vault-500">
               <p className="flex items-center gap-2 font-semibold text-vault-100">
                 <Search className="h-4 w-4" aria-hidden="true" />
                 Noch keine Shop-Vorschläge sichtbar.
@@ -125,14 +143,16 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
   const params = await searchParams
   const supabase = await createClient()
   const tenant = await currentTenant()
-  const [{ data }, { data: sourceData }] = tenant
+  const [{ data }, { data: sourceData }, { data: suggestionData }] = tenant
     ? await Promise.all([
         supabase.from('competitors').select('*').eq('tenant_id', tenant.id).order('shop_name'),
         supabase.from('competitor_products').select('competitor_id, active, health_status').eq('tenant_id', tenant.id),
+        supabase.from('match_suggestions').select('competitor_id').eq('tenant_id', tenant.id).eq('status', 'pending'),
       ])
-    : [{ data: [] }, { data: [] }]
+    : [{ data: [] }, { data: [] }, { data: [] }]
   const competitors = (data ?? []) as Competitor[]
   const sources = (sourceData ?? []) as CompetitorSourceStatus[]
+  const suggestionRows = (suggestionData ?? []) as CompetitorSuggestionStatus[]
   const minimumFrequency = minimumScrapeFrequency(tenant?.plan)
   const competitorLimit = planLimit(tenant?.plan).competitors
   const activeCompetitors = competitors.filter((competitor) => competitor.active)
@@ -140,6 +160,7 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
   const activeSources = sources.filter((source) => source.active)
   const healthySources = activeSources.filter((source) => source.health_status === 'healthy')
   const brokenSources = activeSources.filter((source) => source.health_status === 'broken')
+  const pendingSuggestions = suggestionRows.length
   let storeRecommendations: StoreRecommendation[] = []
   let recommendationsUnavailable = false
   if (tenant) {
@@ -161,6 +182,10 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
   const sourceCountByCompetitor = new Map<string, number>()
   for (const source of activeSources) {
     sourceCountByCompetitor.set(source.competitor_id, (sourceCountByCompetitor.get(source.competitor_id) ?? 0) + 1)
+  }
+  const suggestionCountByCompetitor = new Map<string, number>()
+  for (const suggestion of suggestionRows) {
+    suggestionCountByCompetitor.set(suggestion.competitor_id, (suggestionCountByCompetitor.get(suggestion.competitor_id) ?? 0) + 1)
   }
 
   async function saveAction(formData: FormData) {
@@ -194,14 +219,16 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
     let matchMessage = ''
     if (createdCompetitor?.id) {
       try {
-        const response = await backendFetch('/match/suggestions/generate-missing', tenant.id, {
+        const response = await backendFetch('/match/suggestions/generate-catalog', tenant.id, {
           method: 'POST',
-          body: JSON.stringify({ competitor_id: createdCompetitor.id, limit: 6 }),
+          body: JSON.stringify({ competitor_ids: [createdCompetitor.id], limit: 5 }),
           signal: AbortSignal.timeout(120_000),
         })
         const payload = await response.json()
         if (response.ok && Number(payload.suggestions) > 0) {
           matchMessage = ` ${Number(payload.suggestions)} Produktvorschlag/Vorschläge wurden vorbereitet.`
+        } else if (response.ok && Number(payload.searched_pairs) === 0) {
+          matchMessage = ' Es gibt aktuell keine offenen Varianten für diesen Shop.'
         }
       } catch {
         matchMessage = ' Die automatische Produktsuche konnte nicht abgeschlossen werden; manuelle URLs bleiben verfügbar.'
@@ -215,19 +242,26 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
 
   async function generateMissingMatches(formData: FormData) {
     'use server'
-    if (!tenant) return
-    const competitorId = String(formData.get('competitor_id') ?? '')
-    if (!competitorId) return
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    const competitorId = String(formData.get('id') ?? '')
+    if (!competitorId) return { ok: false, message: 'Mitbewerber fehlt.' }
     try {
-      await backendFetch('/match/suggestions/generate-missing', tenant.id, {
+      const response = await backendFetch('/match/suggestions/generate-catalog', tenant.id, {
         method: 'POST',
-        body: JSON.stringify({ competitor_id: competitorId, limit: 10 }),
+        body: JSON.stringify({ competitor_ids: [competitorId], limit: 5 }),
         signal: AbortSignal.timeout(120_000),
       })
+      const payload = await response.json()
+      if (!response.ok) return { ok: false, message: payload.detail ?? 'Die Produktsuche ist fehlgeschlagen.' }
       revalidatePath('/dashboard/products')
       revalidatePath('/dashboard/competitors')
+      const suggestions = Number(payload.suggestions ?? 0)
+      const searchedPairs = Number(payload.searched_pairs ?? 0)
+      if (suggestions > 0) return { ok: true, message: `${suggestions} Vorschlag/Vorschläge vorbereitet.` }
+      if (searchedPairs === 0) return { ok: true, message: 'Keine offenen Varianten für diesen Shop.' }
+      return { ok: true, message: 'Keine passenden Produktseiten gefunden.' }
     } catch {
-      return
+      return { ok: false, message: 'Die Produktsuche konnte nicht abgeschlossen werden.' }
     }
   }
 
@@ -297,13 +331,14 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
 
   async function remove(formData: FormData) {
     'use server'
-    if (!tenant) return
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
     const client = await createClient()
-    await client
+    const { error } = await client
       .from('competitors')
       .update({ active: false })
       .eq('tenant_id', tenant.id)
       .eq('id', String(formData.get('id')))
+    if (error) return { ok: false, message: 'Mitbewerber konnte nicht deaktiviert werden.' }
     await client
       .from('competitor_products')
       .update({ active: false })
@@ -311,6 +346,7 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
       .eq('competitor_id', String(formData.get('id')))
     revalidatePath('/dashboard/competitors')
     revalidatePath('/dashboard')
+    return { ok: true, message: 'Mitbewerber deaktiviert.' }
   }
 
   return (
@@ -322,34 +358,35 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
         actions={<a href="#new-competitor" className="button-primary gap-2"><Plus className="h-4 w-4" aria-hidden="true" /> Neue Quelle</a>}
       />
 
-      <section className="mb-6 overflow-hidden rounded-2xl border border-vault-700 bg-vault-100 text-white shadow-[0_20px_60px_rgba(26,26,26,.14)]" aria-label="Mitbewerber Überblick">
-        <div className="relative grid gap-px bg-white/10 lg:grid-cols-[1.1fr_.9fr_.9fr_.9fr]">
+      <section className="mb-6 overflow-hidden rounded-lg border border-vault-700 bg-vault-100 text-white shadow-[0_20px_60px_rgba(26,26,26,.14)]" aria-label="Mitbewerber Überblick">
+        <div className="grid gap-px bg-white/10 lg:grid-cols-[minmax(0,1.25fr)_repeat(4,minmax(150px,.75fr))]">
           <div className="relative overflow-hidden bg-vault-100 p-6">
-            <div className="absolute -right-12 -top-16 h-40 w-40 rounded-full bg-merchant-success/25 blur-3xl" aria-hidden="true" />
-            <p className="relative flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+            <div className="absolute inset-x-0 bottom-0 h-16 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.09)_0,rgba(255,255,255,.09)_1px,transparent_1px,transparent_9px)]" aria-hidden="true" />
+            <p className="relative inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">
               <Radar className="h-4 w-4" aria-hidden="true" />
               Markt-Radar
             </p>
-            <h2 className="relative mt-3 text-2xl font-bold tracking-[-0.03em]">Deine wichtigsten Preisquellen an einem Ort.</h2>
+            <h2 className="relative mt-4 max-w-lg text-3xl font-bold">Deine Wettbewerbsquellen als operatives Board.</h2>
             <p className="relative mt-3 max-w-xl text-sm leading-6 text-white/65">
               Prüfe Abdeckung, Abrufrhythmus und defekte Quellen, bevor daraus Preisalarme oder Reports entstehen.
             </p>
           </div>
           {[
             { label: 'Aktive Shops', value: activeCompetitors.length, detail: inactiveCompetitors ? `${inactiveCompetitors} deaktiviert` : 'Alle aktiv', icon: Store },
-            { label: 'Verknüpfte Quellen', value: activeSources.length, detail: `${healthySources.length} gesund`, icon: Activity },
+            { label: 'Quellen', value: activeSources.length, detail: `${healthySources.length} gesund`, icon: Link2 },
+            { label: 'Vorschläge', value: pendingSuggestions, detail: pendingSuggestions ? 'Freigabe offen' : 'Queue leer', icon: ListChecks },
             { label: 'Defekte Quellen', value: brokenSources.length, detail: brokenSources.length ? 'Handlungsbedarf' : 'Keine defekten Quellen', icon: ShieldCheck },
           ].map((item) => {
             const Icon = item.icon
             return (
-              <article key={item.label} className="bg-vault-100 p-6">
+              <article key={item.label} className="bg-vault-100 p-5">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/45">{item.label}</p>
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/10">
+                  <span className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 bg-white/10">
                     <Icon className="h-4 w-4 text-white/75" aria-hidden="true" />
                   </span>
                 </div>
-                <p className="mt-6 text-3xl font-bold">{item.value}</p>
+                <p className="mt-7 font-mono text-3xl font-bold">{item.value}</p>
                 <p className="mt-1 text-xs text-white/55">{item.detail}</p>
               </article>
             )
@@ -375,70 +412,71 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
               {competitors.map((competitor) => (
                 <article
                   key={competitor.id}
-                  className="group relative overflow-hidden rounded-xl border border-vault-700 bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-vault-500 hover:shadow-[0_16px_40px_rgba(26,26,26,.10)]"
+                  className="group relative overflow-hidden rounded-lg border border-vault-700 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-vault-500 hover:shadow-[0_16px_40px_rgba(26,26,26,.10)]"
                 >
-                  <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-vault-100 via-merchant-success to-vault-700 opacity-70" aria-hidden="true" />
-                  <div className="flex items-start gap-3">
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-vault-100 text-sm font-black text-white shadow-sm">
-                      {competitorInitials(competitor.shop_name)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-base font-bold">{competitor.shop_name}</h3>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${competitor.active ? 'bg-emerald-50 text-emerald-700' : 'bg-vault-800 text-vault-500'}`}>
-                          {competitor.active ? 'Aktiv' : 'Inaktiv'}
-                        </span>
+                  <div className="grid min-h-48 sm:grid-cols-[96px_minmax(0,1fr)]">
+                    <div className="relative bg-vault-100 p-4 text-white">
+                      <div className="absolute inset-0 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.10)_0,rgba(255,255,255,.10)_1px,transparent_1px,transparent_9px)] opacity-70" aria-hidden="true" />
+                      <span className="relative grid h-14 w-14 place-items-center rounded-lg border border-white/15 bg-white/10 text-lg font-black">
+                        {competitorInitials(competitor.shop_name)}
+                      </span>
+                      <p className="relative mt-8 font-mono text-[10px] uppercase tracking-[0.16em] text-white/45">{hostFromUrl(competitor.base_url)}</p>
+                    </div>
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="truncate text-lg font-bold">{competitor.shop_name}</h3>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${competitor.active ? 'bg-emerald-50 text-emerald-700' : 'bg-vault-800 text-vault-500'}`}>
+                              {competitor.active ? 'Aktiv' : 'Inaktiv'}
+                            </span>
+                          </div>
+                          <a
+                            className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-vault-500 transition hover:text-merchant-success"
+                            href={competitor.base_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <span className="truncate">{competitor.base_url}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+                          </a>
+                        </div>
+                        <Link className="button-secondary min-h-9 px-3 py-2 text-xs" href={`/dashboard/competitors/${competitor.id}`}>Bearbeiten</Link>
                       </div>
-                      <a
-                        className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-vault-500 transition hover:text-merchant-success"
-                        href={competitor.base_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <span className="truncate">{competitor.base_url}</span>
-                        <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
-                      </a>
-                    </div>
-                  </div>
 
-                  <dl className="mt-5 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-lg bg-vault-950 px-3 py-2">
-                      <dt className="text-vault-500">Intervall</dt>
-                      <dd className="mt-1 font-semibold">Alle {competitor.scrape_freq_h} Std.</dd>
-                    </div>
-                    <div className="rounded-lg bg-vault-950 px-3 py-2">
-                      <dt className="text-vault-500">Quellen</dt>
-                      <dd className="mt-1 font-semibold">{sourceCountByCompetitor.get(competitor.id) ?? 0}</dd>
-                    </div>
-                    <div className="rounded-lg bg-vault-950 px-3 py-2">
-                      <dt className="text-vault-500">Abruf</dt>
-                      <dd className="mt-1 truncate font-semibold">{formatRelativeTime(competitor.last_scraped_at)}</dd>
-                    </div>
-                  </dl>
+                      <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-4">
+                        <div>
+                          <dt className="flex items-center gap-1 text-vault-500"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Intervall</dt>
+                          <dd className="mt-1 font-semibold">Alle {competitor.scrape_freq_h} Std.</dd>
+                        </div>
+                        <div>
+                          <dt className="flex items-center gap-1 text-vault-500"><Activity className="h-3.5 w-3.5" aria-hidden="true" />Quellen</dt>
+                          <dd className="mt-1 font-semibold">{sourceCountByCompetitor.get(competitor.id) ?? 0}</dd>
+                        </div>
+                        <div>
+                          <dt className="flex items-center gap-1 text-vault-500"><ListChecks className="h-3.5 w-3.5" aria-hidden="true" />Vorschläge</dt>
+                          <dd className="mt-1 font-semibold">{suggestionCountByCompetitor.get(competitor.id) ?? 0}</dd>
+                        </div>
+                        <div>
+                          <dt className="flex items-center gap-1 text-vault-500"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />Abruf</dt>
+                          <dd className="mt-1 truncate font-semibold">{formatRelativeTime(competitor.last_scraped_at)}</dd>
+                        </div>
+                      </dl>
 
-                  <div className="mt-4 flex items-center justify-between gap-3 border-t border-vault-700 pt-4">
-                    <div className="flex min-w-0 items-center gap-2 text-xs text-vault-500">
-                      <Globe2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-                      <span className="truncate font-mono">{competitor.selector_price || 'Selektor wird pro Produkt gesetzt'}</span>
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      {competitor.active && (
-                        <form action={generateMissingMatches}>
-                          <input type="hidden" name="competitor_id" value={competitor.id} />
-                          <button className="grid h-9 w-9 place-items-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 transition hover:bg-emerald-100" aria-label={`Produktvorschläge für ${competitor.shop_name} suchen`}>
-                            <WandSparkles className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                        </form>
-                      )}
-                      <Link className="button-secondary min-h-9 px-3 py-2 text-xs" href={`/dashboard/competitors/${competitor.id}`}>Bearbeiten</Link>
-                    {competitor.active && (
-                      <form action={remove}>
-                        <input type="hidden" name="id" value={competitor.id} />
-                          <button className="grid h-9 w-9 place-items-center rounded-lg border border-red-200 bg-red-50 text-red-800 transition hover:bg-red-100" aria-label={`${competitor.shop_name} deaktivieren`}>
-                            <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                      </form>
-                    )}
+                      <div className="mt-5 flex items-center justify-between gap-3 border-t border-vault-700 pt-4">
+                        <div className="flex min-w-0 items-center gap-2 text-xs text-vault-500">
+                          <Globe2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                          <span className="truncate font-mono">{competitor.selector_price || 'Selektor wird pro Produkt gesetzt'}</span>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          {competitor.active && (
+                            <MutationButton id={competitor.id} label={`Produktvorschläge für ${competitor.shop_name} suchen`} pendingLabel="Produktsuche läuft …" action={generateMissingMatches} tone="neutral" icon="sparkles" iconOnly />
+                          )}
+                          {competitor.active && (
+                            <MutationButton id={competitor.id} label={`${competitor.shop_name} deaktivieren`} pendingLabel="Wird deaktiviert …" action={remove} icon="trash" iconOnly />
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -458,17 +496,18 @@ export default async function CompetitorsPage({ searchParams }: CompetitorsPageP
         </section>
 
         <section className="panel overflow-hidden xl:sticky xl:top-20" aria-labelledby="new-competitor">
-          <div className="border-b border-vault-700 bg-vault-100 p-5 text-white sm:p-6">
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
+          <div className="relative overflow-hidden border-b border-vault-700 bg-vault-100 p-5 text-white sm:p-6">
+            <div className="absolute inset-y-0 right-0 w-32 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.10)_0,rgba(255,255,255,.10)_1px,transparent_1px,transparent_9px)]" aria-hidden="true" />
+            <p className="relative flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/55">
               <Gauge className="h-4 w-4" aria-hidden="true" />
               Neue Quelle
             </p>
-            <h2 id="new-competitor" className="mt-2 text-2xl font-bold tracking-[-0.03em]">Mitbewerber anlegen</h2>
-            <p className="mt-2 text-sm leading-6 text-white/65">
+            <h2 id="new-competitor" className="relative mt-2 text-2xl font-bold">Mitbewerber anlegen</h2>
+            <p className="relative mt-2 text-sm leading-6 text-white/65">
               Starte mit einem Shop. PriceVault sucht danach passende Produktseiten; manuelle URLs überschreiben verpasste Treffer.
             </p>
             {competitorLimit !== null && (
-              <div className="mt-4 rounded-xl bg-white/10 p-3 text-xs text-white/70">
+              <div className="relative mt-4 rounded-lg bg-white/10 p-3 text-xs text-white/70">
                 Dein Plan nutzt <strong className="text-white">{activeCompetitors.length} von {competitorLimit}</strong> Mitbewerbern.
               </div>
             )}

@@ -1,9 +1,11 @@
+import { revalidatePath } from 'next/cache'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { PageHeader } from '@/components/ui/MerchantUI'
 import { PriceTrendChart } from '@/components/ui/PriceTrendChart'
-import { currentTenant } from '@/lib/backend'
+import { backendFetch, currentTenant } from '@/lib/backend'
+import { hasPlan } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { CompetitorProduct, PriceSnapshot, Product, ProductVariant } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
@@ -17,6 +19,19 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   const { id } = await params
   const tenant = await currentTenant()
   if (!tenant) notFound()
+
+  async function updateMapPrice(formData: FormData) {
+    'use server'
+    const activeTenant = await currentTenant()
+    if (!activeTenant) return
+    const variantId = String(formData.get('variant_id') ?? '')
+    const mapRaw = String(formData.get('map_price') ?? '').trim().replace(',', '.')
+    await backendFetch(`/products/${id}/variants/${variantId}`, activeTenant.id, {
+      method: 'PATCH',
+      body: JSON.stringify({ map_price: mapRaw ? Number(mapRaw) : null }),
+    })
+    revalidatePath(`/dashboard/products/${id}`)
+  }
 
   const supabase = await createClient()
   const { data: product } = await supabase
@@ -59,6 +74,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   const typedProduct = product as Product
   const typedVariants = (variants ?? []) as ProductVariant[]
   const typedSnapshots = (snapshots ?? []) as PriceSnapshot[]
+  const growthFeaturesEnabled = hasPlan(tenant.plan, 'pro')
   const { data: insightData } = await supabase
     .from('product_insights')
     .select('*')
@@ -77,6 +93,16 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
   const latestByMapping = new Map<string, PriceSnapshot>()
   for (const snapshot of typedSnapshots) latestByMapping.set(snapshot.competitor_product_id, snapshot)
+  const comparisonRows = mappingRows
+    .map((mapping) => ({
+      mapping,
+      latest: latestByMapping.get(mapping.id),
+      delta: typedProduct.our_price !== null && latestByMapping.get(mapping.id)?.price !== null && latestByMapping.get(mapping.id)?.price !== undefined
+        ? Number(latestByMapping.get(mapping.id)?.price) - Number(typedProduct.our_price)
+        : null,
+    }))
+    .sort((a, b) => Number(a.latest?.price ?? Number.POSITIVE_INFINITY) - Number(b.latest?.price ?? Number.POSITIVE_INFINITY))
+  const cheapest = comparisonRows.find((row) => row.latest?.price !== null && row.latest?.price !== undefined)
 
   return (
     <>
@@ -114,13 +140,19 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
             </div>
             <p className="font-mono text-xs text-vault-500">{typedSnapshots.length} Messpunkte</p>
           </div>
-          <PriceTrendChart
-            snapshots={typedSnapshots}
-            sources={mappingRows.map((mapping) => ({
-              id: mapping.id,
-              label: mapping.competitors?.shop_name ?? 'Mitbewerber',
-            }))}
-          />
+          {growthFeaturesEnabled ? (
+            <PriceTrendChart
+              snapshots={typedSnapshots}
+              sources={mappingRows.map((mapping) => ({
+                id: mapping.id,
+                label: mapping.competitors?.shop_name ?? 'Mitbewerber',
+              }))}
+            />
+          ) : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm leading-6 text-amber-900">
+              Historische Preisverläufe sind ab dem Pro-Plan verfügbar.
+            </div>
+          )}
         </section>
 
         <aside className="space-y-6">
@@ -136,7 +168,8 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
             </div>
             <div className="divide-y divide-vault-700/70">
               {typedVariants.map((variant) => (
-                <article key={variant.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 p-5 text-sm">
+                <article key={variant.id} className="grid gap-4 p-5 text-sm">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
                   <div>
                     <p className="font-semibold">{variant.name}{variant.is_default ? ' · Standard' : ''}</p>
                     <p className="mt-1 font-mono text-xs text-vault-500">{variant.sku ?? 'Keine SKU'}{variant.gtin ? ` · GTIN ${variant.gtin}` : ''}</p>
@@ -145,6 +178,17 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                     <p className="font-mono font-semibold">{formatPrice(variant.our_price, variant.currency)}</p>
                     <p className="mt-1 text-xs text-vault-500">EK {formatPrice(variant.cost_price, variant.currency)}</p>
                   </div>
+                  </div>
+                  {hasPlan(tenant.plan, 'pro') && (
+                    <form action={updateMapPrice} className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <input type="hidden" name="variant_id" value={variant.id} />
+                      <label>
+                        <span className="field-label">Mindestwerbepreis (MAP) €</span>
+                        <input className="field" name="map_price" type="number" min="0" step="0.01" defaultValue={variant.map_price ?? ''} />
+                      </label>
+                      <button className="button-secondary">Speichern</button>
+                    </form>
+                  )}
                 </article>
               ))}
             </div>
@@ -183,6 +227,45 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           </section>
         </aside>
       </div>
+
+      {growthFeaturesEnabled && (
+        <section className="panel mt-6 overflow-hidden" aria-labelledby="comparison">
+          <div className="border-b border-vault-700 px-5 py-4">
+            <p className="eyebrow">Mehrquellenvergleich</p>
+            <h2 id="comparison" className="mt-2 font-semibold">Aktuelle Preise nach Quelle</h2>
+            {cheapest && <p className="mt-1 text-sm text-vault-500">Niedrigster aktueller Preis: {cheapest.mapping.competitors?.shop_name ?? 'Mitbewerber'} mit {formatPrice(cheapest.latest?.price ?? null)}</p>}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-vault-700 text-sm">
+              <thead className="bg-vault-950 text-left text-xs uppercase tracking-[0.08em] text-vault-500">
+                <tr>
+                  <th className="px-5 py-3">Mitbewerber</th>
+                  <th className="px-5 py-3">Variante</th>
+                  <th className="px-5 py-3">Preis</th>
+                  <th className="px-5 py-3">Abstand zu dir</th>
+                  <th className="px-5 py-3">Bestand</th>
+                  <th className="px-5 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-vault-700">
+                {comparisonRows.map(({ mapping, latest, delta }) => (
+                  <tr key={mapping.id}>
+                    <td className="px-5 py-4 font-semibold">{mapping.competitors?.shop_name ?? 'Mitbewerber'}</td>
+                    <td className="px-5 py-4 text-vault-500">{mapping.product_variants?.name ?? 'Standard'}</td>
+                    <td className="px-5 py-4 font-mono">{formatPrice(latest?.price ?? null)}</td>
+                    <td className={`px-5 py-4 font-mono ${delta !== null && delta < 0 ? 'text-red-700' : 'text-vault-500'}`}>{delta === null ? '–' : formatPrice(delta)}</td>
+                    <td className="px-5 py-4">{latest?.in_stock === null || latest?.in_stock === undefined ? 'Unbekannt' : latest.in_stock ? 'Auf Lager' : 'Nicht verfügbar'}</td>
+                    <td className="px-5 py-4">{mapping.health_status === 'broken' ? 'Defekt' : mapping.health_status === 'degraded' ? 'Degradiert' : mapping.health_status === 'blocked' ? 'Blockiert' : 'Gesund'}</td>
+                  </tr>
+                ))}
+                {!comparisonRows.length && (
+                  <tr><td colSpan={6} className="px-5 py-6 text-vault-500">Noch keine Quellen für den Vergleich vorhanden.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </>
   )
 }

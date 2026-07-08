@@ -1,22 +1,57 @@
 import { createClient } from '@/lib/supabase/server'
 import type { Tenant } from '@/lib/types'
+import { cookies } from 'next/headers'
+
+export async function listTenantsForUser(): Promise<Tenant[]> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return []
+  const { data: tenants } = await supabase
+    .from('tenants')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (!tenants?.length) return []
+
+  const result: Tenant[] = []
+  for (const tenant of tenants) {
+    if (tenant.user_id === user.id) {
+      result.push({ ...tenant, membership_role: 'owner' } as Tenant)
+      continue
+    }
+    const { data: membership } = await supabase
+      .from('team_members')
+      .select('role,accepted')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (membership?.accepted) result.push({ ...tenant, membership_role: membership.role } as Tenant)
+  }
+  return result
+}
 
 export async function currentTenant() {
+  const tenants = await listTenantsForUser()
+  const selectedTenantId = (await cookies()).get('pv-tenant')?.value
+  if (selectedTenantId) {
+    const selected = tenants.find((tenant) => tenant.id === selectedTenantId)
+    if (selected) return selected
+  }
+  if (tenants.length) return tenants[0]
+
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return null
-  const { data: tenants } = await supabase
+  const { data: rawTenants } = await supabase
     .from('tenants')
     .select('*')
     .order('created_at', { ascending: true })
-  if (!tenants?.length) return null
+  if (!rawTenants?.length) return null
 
-  const owned = tenants.find((tenant) => tenant.user_id === user.id)
-  if (owned) return { ...owned, membership_role: 'owner' } as Tenant
-
-  for (const tenant of tenants) {
+  for (const tenant of rawTenants) {
     const { data: membership } = await supabase
       .from('team_members')
       .select('role,accepted')

@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   Bell,
+  BriefcaseBusiness,
   Building2,
   BadgeEuro,
   ChevronDown,
@@ -16,6 +17,7 @@ import {
   Package,
   Plug,
   Radio,
+  Scale,
   Shield,
   Store,
   Users,
@@ -26,6 +28,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
 import { useSupabase } from '@/components/providers/SupabaseProvider'
+import { TenantSwitcher } from '@/components/ui/TenantSwitcher'
+import type { Tenant } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const primaryLinks = [
@@ -37,6 +41,8 @@ const primaryLinks = [
 
 const monitorLinks = [
   { href: '/dashboard/source-health', label: 'Quellenstatus', icon: HeartPulse },
+  { href: '/dashboard/benchmark', label: 'Benchmark', icon: BarChart3, minimumPlan: 'pro' as const },
+  { href: '/dashboard/map', label: 'MAP-Überwachung', icon: Scale, minimumPlan: 'pro' as const },
   { href: '/dashboard/alerts', label: 'Preisalarme', icon: Bell },
   { href: '/dashboard/repricing', label: 'Preisvorschläge', icon: BadgeEuro },
   { href: '/dashboard/alerts/channels', label: 'Kanäle', icon: Radio },
@@ -47,6 +53,7 @@ const monitorLinks = [
 
 const supportLinks = [{ href: '/dashboard/support', label: 'Support', icon: LifeBuoy }]
 const systemLinks = [
+  { href: '/dashboard/portfolio', label: 'Portfolio', icon: BriefcaseBusiness, minimumPlan: 'agency' as const },
   { href: '/dashboard/admin', label: 'Support-Konsole', icon: Shield },
   { href: '/dashboard/settings/integrations', label: 'Integrationen', icon: Plug },
   { href: '/dashboard/settings/notifications', label: 'Tagesübersicht', icon: Mail },
@@ -61,12 +68,25 @@ function activeHref(pathname: string) {
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
 }
 
-function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function visibleLinks<T extends { minimumPlan?: 'pro' | 'agency' }>(links: T[], plan: Tenant['plan']) {
+  const rank = { free: 0, trial: 0, starter: 1, pro: 1, agency: 2 }
+  return links.filter((link) => !link.minimumPlan || rank[plan] >= rank[link.minimumPlan])
+}
+
+function NavigationLinks({
+  pathname,
+  plan,
+  onNavigate,
+}: {
+  pathname: string
+  plan: Tenant['plan']
+  onNavigate?: () => void
+}) {
   const current = activeHref(pathname)
   const groups = [
     { label: 'Shop', links: primaryLinks },
-    { label: 'Monitoring', links: monitorLinks },
-    { label: 'System', links: systemLinks },
+    { label: 'Monitoring', links: visibleLinks(monitorLinks, plan) },
+    { label: 'System', links: visibleLinks(systemLinks, plan) },
     { label: 'Hilfe', links: supportLinks },
   ]
 
@@ -104,7 +124,17 @@ function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigat
   )
 }
 
-export function Sidebar({ shopName }: { shopName: string }) {
+export function Sidebar({
+  shopName,
+  plan,
+  tenants,
+  currentTenantId,
+}: {
+  shopName: string
+  plan: Tenant['plan']
+  tenants: Tenant[]
+  currentTenantId: string
+}) {
   const pathname = usePathname()
   const router = useRouter()
   const { supabase } = useSupabase()
@@ -235,8 +265,9 @@ export function Sidebar({ shopName }: { shopName: string }) {
             </div>
           )}
         </div>
+        <TenantSwitcher tenants={tenants} currentTenantId={currentTenantId} />
         <div className="no-scrollbar flex-1 overflow-y-auto px-3 py-5">
-          <NavigationLinks pathname={pathname} />
+          <NavigationLinks pathname={pathname} plan={plan} />
         </div>
         <div className="border-t border-vault-700 p-3">
           <Link href="/onboarding" prefetch={false} className="flex min-h-10 items-center rounded-lg px-3 text-sm text-vault-300 hover:bg-white/70 hover:text-vault-100">
@@ -262,7 +293,7 @@ export function Sidebar({ shopName }: { shopName: string }) {
               </button>
             </div>
             <div className="no-scrollbar flex-1 overflow-y-auto px-3 py-5">
-              <NavigationLinks pathname={pathname} onNavigate={() => setOpen(false)} />
+              <NavigationLinks pathname={pathname} plan={plan} onNavigate={() => setOpen(false)} />
             </div>
             <div className="border-t border-vault-700 p-4 text-sm text-vault-300">
               <Link href="/dashboard/account" prefetch={false} onClick={() => setOpen(false)} className="block py-2">Mein Konto</Link>

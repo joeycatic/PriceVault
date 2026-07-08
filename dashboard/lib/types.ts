@@ -88,6 +88,7 @@ export type ProductVariant = {
   attributes: Record<string, string>
   our_price: number | null
   cost_price: number | null
+  map_price: number | null
   currency: string
   is_default: boolean
   active: boolean
@@ -149,7 +150,7 @@ export type Alert = {
   tenant_id: string
   product_id: string | null
   competitor_id: string | null
-  condition: 'below_pct' | 'above_pct' | 'below_abs' | 'above_abs' | 'out_of_stock' | 'back_in_stock' | 'undercut_abs' | 'price_drop' | 'price_rise' | 'source_broken'
+  condition: 'below_pct' | 'above_pct' | 'below_abs' | 'above_abs' | 'out_of_stock' | 'back_in_stock' | 'undercut_abs' | 'price_drop' | 'price_rise' | 'source_broken' | 'sale_started' | 'sale_ended' | 'map_violation'
   threshold: number | null
   threshold_unit: 'percent' | 'absolute'
   notify_email: string

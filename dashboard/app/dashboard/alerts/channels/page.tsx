@@ -1,4 +1,5 @@
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { Radio, Send, Trash2, Webhook } from 'lucide-react'
 
 import { backendFetch, currentTenant } from '@/lib/backend'
@@ -8,9 +9,10 @@ import { hasPlan } from '@/lib/plan-gates'
 
 type AlertChannelRow = {
   id: string
-  type: 'webhook' | 'slack'
+  type: 'webhook' | 'slack' | 'teams'
   config: { url?: string; webhook_url?: string }
   active: boolean
+  signing_secret?: string
 }
 
 type DeliveryRow = {
@@ -29,14 +31,18 @@ async function createChannel(formData: FormData) {
   if (!hasPlan(tenant.plan, 'pro') || !['owner', 'admin'].includes(tenant.membership_role ?? 'owner')) return
   const type = String(formData.get('type') ?? 'webhook')
   const url = String(formData.get('url') ?? '')
-  await backendFetch('/alert-channels', tenant.id, {
+  const response = await backendFetch('/alert-channels', tenant.id, {
     method: 'POST',
     body: JSON.stringify({
       type,
-      config: type === 'slack' ? { webhook_url: url } : { url },
+      config: type === 'slack' || type === 'teams' ? { webhook_url: url } : { url },
     }),
   })
   revalidatePath('/dashboard/alerts/channels')
+  const payload = await response.json().catch(() => ({}))
+  if (payload.signing_secret) {
+    redirect(`/dashboard/alerts/channels?secret=${encodeURIComponent(payload.signing_secret)}`)
+  }
 }
 
 async function deleteChannel(formData: FormData) {
@@ -59,7 +65,12 @@ async function testChannel(formData: FormData) {
   return { ok: true, message: 'Test wurde gesendet.' }
 }
 
-export default async function AlertChannelsPage() {
+export default async function AlertChannelsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ secret?: string }>
+}) {
+  const params = await searchParams
   const tenant = await currentTenant()
   const canManageIntegrations =
     hasPlan(tenant?.plan, 'pro') && ['owner', 'admin'].includes(tenant?.membership_role ?? 'owner')
@@ -81,15 +92,22 @@ export default async function AlertChannelsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Preisalarme" title="Kanäle" description="Webhook- und Slack-Ziele für automatische Benachrichtigungen verwalten." />
+      <PageHeader eyebrow="Preisalarme" title="Kanäle" description="Webhook-, Slack- und Teams-Ziele für automatische Benachrichtigungen verwalten." />
       <div className="mb-6">
         <MetricGrid items={[
           { label: 'Aktive Kanäle', value: data.filter((channel) => channel.active).length, tone: data.length ? 'success' : 'neutral' },
           { label: 'Zustellungen', value: deliveries.length, detail: 'Historie geladen' },
           { label: 'Plan-Zugriff', value: canManageIntegrations ? 'Aktiv' : 'Gesperrt', tone: canManageIntegrations ? 'success' : 'warning' },
-          { label: 'Typen', value: 'Webhook / Slack' },
+          { label: 'Typen', value: 'Webhook / Slack / Teams' },
         ]} />
       </div>
+      {params?.secret && (
+        <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <p className="font-semibold">Signatur-Secret — wird nur einmal angezeigt.</p>
+          <p className="mt-1 leading-6">Verifiziere eingehende Webhooks mit HMAC-SHA256 über &quot;timestamp.body&quot;.</p>
+          <code className="mt-3 block overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-xs text-vault-100">{params.secret}</code>
+        </div>
+      )}
       {canManageIntegrations ? (
         <section className="panel overflow-hidden">
           <div className="border-b border-vault-700 bg-vault-100 p-5 text-white">
@@ -106,6 +124,7 @@ export default async function AlertChannelsPage() {
               <select className="field" name="type" defaultValue="webhook">
                 <option value="webhook">Webhook</option>
                 <option value="slack">Slack</option>
+                <option value="teams">Microsoft Teams</option>
               </select>
             </label>
             <label>

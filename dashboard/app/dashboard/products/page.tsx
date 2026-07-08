@@ -1,10 +1,12 @@
 import { revalidatePath } from 'next/cache'
 import {
   AlertTriangle,
+  ArrowRight,
   Bot,
   Boxes,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   FileSpreadsheet,
   Link2,
   ListChecks,
@@ -13,6 +15,7 @@ import {
   Search,
   Tags,
   Store,
+  WandSparkles,
   Workflow,
   type LucideIcon,
 } from 'lucide-react'
@@ -27,15 +30,24 @@ import { ExportButton } from '@/app/dashboard/products/[id]/ExportButton'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { catalogDuplicateReason, createDuplicateIndex } from '@/lib/catalog-duplicates'
 import { parsePriceInput } from '@/lib/priceInput'
-import { planLimit } from '@/lib/plan-gates'
+import { minimumScrapeFrequency, planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
-import type { Competitor, CompetitorProduct, LatestPrice, MatchSuggestion, Product, ProductVariant } from '@/lib/types'
+import type { Competitor, CompetitorProduct, LatestPrice, MatchSuggestion, Product, ProductVariant, StoreRecommendation } from '@/lib/types'
 import { formatPrice, formatRelativeTime } from '@/lib/utils'
 
 type MappingRow = CompetitorProduct & {
   products: { name: string } | null
   product_variants: { name: string; sku: string | null; our_price: number | null; currency: string } | null
   competitors: { shop_name: string; scrape_freq_h: number } | null
+}
+
+type SuggestionGroup = {
+  key: string
+  productName: string
+  variantName: string
+  variantSku: string | null
+  variantGtin: string | null
+  suggestions: MatchSuggestion[]
 }
 
 function splitProductLine(line: string) {
@@ -68,6 +80,14 @@ function parseProductImport(input: string) {
         our_currency: 'EUR',
       }
     })
+}
+
+function hostFromUrl(value: string) {
+  try {
+    return new URL(value).host.replace(/^www\./, '')
+  } catch {
+    return value.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+  }
 }
 
 function ProductsPanelTitle({
@@ -152,10 +172,48 @@ export default async function ProductsPage() {
   const mappings = (mappingResult.data ?? []) as MappingRow[]
   const latestRows = (latestResult.data ?? []) as LatestPrice[]
   const suggestions = (suggestionResult.data ?? []) as MatchSuggestion[]
+  const canManageMatching = Boolean(tenant && ['owner', 'admin'].includes(tenant.membership_role ?? 'owner'))
   const latestByMapping = new Map(latestRows.map((row) => [row.competitor_product_id, row]))
   const productLimit = planLimit(tenant?.plan).products
+  const competitorLimit = planLimit(tenant?.plan).competitors
   const unhealthyMappings = mappings.filter((mapping) => ['degraded', 'broken'].includes(mapping.health_status))
   const healthyMappings = mappings.filter((mapping) => mapping.health_status === 'healthy')
+  let storeRecommendations: StoreRecommendation[] = []
+  let recommendationsUnavailable = false
+  if (tenant && canManageMatching) {
+    try {
+      const response = await backendFetch('/competitors/recommendations?limit=6', tenant.id, { cache: 'no-store' })
+      if (response.ok) {
+        const payload = (await response.json()) as { recommendations?: StoreRecommendation[] }
+        storeRecommendations = Array.isArray(payload.recommendations) ? payload.recommendations : []
+      } else {
+        recommendationsUnavailable = true
+      }
+    } catch {
+      recommendationsUnavailable = true
+      storeRecommendations = []
+    }
+  }
+  const competitorHosts = new Set(competitors.map((competitor) => hostFromUrl(competitor.base_url)))
+  const visibleRecommendations = storeRecommendations
+    .filter((recommendation) => !competitorHosts.has(hostFromUrl(recommendation.base_url)))
+    .slice(0, 4)
+  const suggestionGroups = Array.from(
+    suggestions.reduce((groups, suggestion) => {
+      const key = `${suggestion.product_id}:${suggestion.variant_id}`
+      const current = groups.get(key) ?? {
+        key,
+        productName: suggestion.products?.name ?? 'Unbekanntes Produkt',
+        variantName: suggestion.product_variants?.name ?? 'Standard',
+        variantSku: suggestion.product_variants?.sku ?? null,
+        variantGtin: suggestion.product_variants?.gtin ?? null,
+        suggestions: [],
+      }
+      current.suggestions.push(suggestion)
+      groups.set(key, current)
+      return groups
+    }, new Map<string, SuggestionGroup>()).values(),
+  )
 
   async function createProduct(formData: FormData) {
     'use server'
@@ -484,6 +542,59 @@ export default async function ProductsPage() {
     }
   }
 
+  async function approveRecommendedCompetitor(formData: FormData) {
+    'use server'
+    if (!tenant) return
+    const minimum = minimumScrapeFrequency(tenant.plan)
+    const frequency = Math.min(168, Math.max(minimum, tenant.default_scrape_freq_h ?? minimum))
+    const shopName = String(formData.get('shop_name') ?? '').trim()
+    const baseUrl = String(formData.get('base_url') ?? '').trim()
+    if (!shopName || !baseUrl) return
+    try {
+      const response = await backendFetch('/competitors', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({
+          shop_name: shopName,
+          base_url: baseUrl,
+          scrape_freq_h: frequency,
+          notes: 'Aus Shop-Empfehlung übernommen.',
+        }),
+      })
+      if (!response.ok) return
+      revalidatePath('/dashboard/products')
+      revalidatePath('/dashboard/competitors')
+      revalidatePath('/dashboard')
+    } catch {
+      return
+    }
+  }
+
+  async function generateCatalogSuggestions(_formData: FormData) {
+    'use server'
+    if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
+    try {
+      const response = await backendFetch('/match/suggestions/generate-catalog', tenant.id, {
+        method: 'POST',
+        body: JSON.stringify({ limit: 5 }),
+        signal: AbortSignal.timeout(180_000),
+      })
+      const payload = await response.json()
+      if (!response.ok) return { ok: false, message: payload.detail ?? 'Das automatische Matching ist fehlgeschlagen.' }
+      revalidatePath('/dashboard/products')
+      return {
+        ok: true,
+        message: Number(payload.suggestions) > 0
+          ? `${Number(payload.suggestions)} Vorschlag/Vorschläge vorbereitet.`
+          : 'Keine neuen Vorschläge gefunden.',
+      }
+    } catch (error) {
+      console.error('[products/matcher] catalog generation failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return { ok: false, message: error instanceof Error && error.name === 'TimeoutError' ? 'Das automatische Matching hat das Zeitlimit überschritten.' : 'Das automatische Matching konnte nicht abgeschlossen werden.' }
+    }
+  }
+
   async function reviewSuggestion(formData: FormData, decision: 'approve' | 'reject') {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
@@ -757,6 +868,98 @@ export default async function ProductsPage() {
                 </div>
               </div>
             </div>
+            <div className="border-b border-vault-700 bg-white px-5 py-5 sm:px-6">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-start">
+                <div>
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-emerald-200 bg-emerald-50 text-merchant-success">
+                      <WandSparkles className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <p className="eyebrow">Bulk-Workflow</p>
+                      <h3 className="mt-1 font-semibold text-vault-100">Auto-Matching starten</h3>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-vault-300">
+                        Gib zuerst passende Shops frei. Danach sucht PriceVault für alle aktiven Varianten nach Produktseiten bei freigegebenen Mitbewerbern und legt nur prüfpflichtige Vorschläge an.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-xl border border-vault-700 bg-vault-950 p-4">
+                      <p className="text-xs font-semibold text-vault-500">01 Shops freigeben</p>
+                      <p className="mt-2 text-sm font-semibold text-vault-100">{competitors.length ? `${competitors.length} Mitbewerber aktiv` : 'Keine Mitbewerber freigegeben'}</p>
+                    </div>
+                    <div className="rounded-xl border border-vault-700 bg-vault-950 p-4">
+                      <p className="text-xs font-semibold text-vault-500">02 Varianten durchsuchen</p>
+                      <p className="mt-2 text-sm font-semibold text-vault-100">{variants.length} aktive Variante(n)</p>
+                    </div>
+                    <div className="rounded-xl border border-vault-700 bg-vault-950 p-4">
+                      <p className="text-xs font-semibold text-vault-500">03 Vorschläge prüfen</p>
+                      <p className="mt-2 text-sm font-semibold text-vault-100">{suggestions.length} offen</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-vault-700 bg-vault-950 p-4">
+                  <MutationButton
+                    id="catalog"
+                    label="Auto-Matching starten"
+                    pendingLabel="Matching läuft …"
+                    action={generateCatalogSuggestions}
+                    tone="neutral"
+                  />
+                  <p className="mt-3 text-xs leading-5 text-vault-500">
+                    {competitors.length ? 'Sucht nur bei aktiven Mitbewerbern und überspringt bestehende Zuordnungen.' : 'Keine Mitbewerber freigegeben.'}
+                  </p>
+                </div>
+              </div>
+              {canManageMatching && (
+                <div className="mt-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-vault-100">Empfohlene Shops</h4>
+                    {competitorLimit !== null && (
+                      <span className="rounded-full border border-vault-700 bg-white px-3 py-1 text-xs font-semibold text-vault-500">
+                        {competitors.length}/{competitorLimit} aktiv
+                      </span>
+                    )}
+                  </div>
+                  {visibleRecommendations.length ? (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {visibleRecommendations.map((recommendation) => (
+                        <article key={recommendation.host} className="rounded-xl border border-vault-700 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h5 className="truncate font-semibold text-vault-100">{recommendation.shop_name}</h5>
+                              <p className="mt-1 truncate font-mono text-xs text-vault-500">{recommendation.host}</p>
+                            </div>
+                            <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                              {Math.round(recommendation.confidence * 100)}%
+                            </span>
+                          </div>
+                          <p className="mt-3 line-clamp-2 text-xs leading-5 text-vault-500">{recommendation.reasons.join(' · ')}</p>
+                          <div className="mt-4 flex items-center justify-between gap-2 border-t border-vault-700 pt-3">
+                            <a className="inline-flex items-center gap-1 text-xs font-semibold text-vault-500 hover:text-merchant-success" href={recommendation.base_url} target="_blank" rel="noreferrer">
+                              Prüfen
+                              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                            </a>
+                            <form action={approveRecommendedCompetitor}>
+                              <input type="hidden" name="shop_name" value={recommendation.shop_name} />
+                              <input type="hidden" name="base_url" value={recommendation.base_url} />
+                              <button className="button-primary min-h-9 px-3 py-2 text-xs">
+                                Freigeben
+                                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            </form>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-vault-700 bg-vault-950 px-4 py-5 text-sm text-vault-500">
+                      {recommendationsUnavailable ? 'Shop-Empfehlungen sind gerade nicht verfügbar.' : 'Keine neuen Shop-Empfehlungen.'}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="grid items-start gap-4 bg-vault-800/55 p-4 lg:grid-cols-2 sm:p-5">
               <div className="rounded-2xl border border-vault-700 bg-white p-5 shadow-sm sm:p-6">
                 <MatchingMethodHeader
@@ -790,30 +993,47 @@ export default async function ProductsPage() {
                 </div>
                 <span className="w-fit rounded-full border border-vault-700 bg-vault-800 px-3 py-1 font-mono text-xs text-vault-500">{suggestions.length} offen</span>
               </div>
-              {suggestions.length ? (
+              {suggestionGroups.length ? (
                 <div className="divide-y divide-vault-700/70 border-t border-vault-700">
-                  {suggestions.map((suggestion) => (
-                    <article key={suggestion.id} className="grid gap-4 p-5 transition hover:bg-vault-800/80 sm:px-6 lg:grid-cols-[minmax(0,1fr)_140px_auto] lg:items-center">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-vault-100">{suggestion.products?.name} · {suggestion.product_variants?.name}</p>
-                        <p className="mt-1 text-sm text-vault-300">{suggestion.candidate_title}</p>
-                        <a className="mt-1 block truncate font-mono text-xs text-merchant-success hover:underline" href={suggestion.candidate_url} target="_blank" rel="noreferrer">
-                          {suggestion.candidate_url}
-                        </a>
+                  {suggestionGroups.map((group) => (
+                    <section key={group.key} className="p-5 sm:px-6" aria-label={`${group.productName} ${group.variantName}`}>
+                      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h4 className="font-semibold text-vault-100">{group.productName} · {group.variantName}</h4>
+                          <p className="mt-1 font-mono text-xs text-vault-500">
+                            {group.variantSku ?? 'ohne SKU'}{group.variantGtin ? ` · GTIN ${group.variantGtin}` : ''}
+                          </p>
+                        </div>
+                        <span className="w-fit rounded-full border border-vault-700 bg-vault-950 px-3 py-1 text-xs font-semibold text-vault-500">
+                          {group.suggestions.length} Treffer
+                        </span>
                       </div>
-                      <div className="rounded-xl border border-vault-700 bg-white px-3 py-2">
-                        <p className="font-mono text-sm font-semibold text-vault-100">{Number(suggestion.confidence * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</p>
-                        <p className="mt-1 text-xs text-vault-500">{suggestion.match_method === 'gtin' ? 'GTIN / EAN' : 'Namensabgleich'}</p>
+                      <div className="grid gap-3">
+                        {group.suggestions.map((suggestion) => (
+                          <article key={suggestion.id} className="grid gap-4 rounded-xl border border-vault-700 bg-white p-4 transition hover:bg-vault-950/70 lg:grid-cols-[minmax(0,1fr)_150px_auto] lg:items-center">
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-vault-500">{suggestion.competitors?.shop_name ?? 'Mitbewerber'}</p>
+                              <p className="mt-1 text-sm font-semibold text-vault-100">{suggestion.candidate_title}</p>
+                              <a className="mt-1 block truncate font-mono text-xs text-merchant-success hover:underline" href={suggestion.candidate_url} target="_blank" rel="noreferrer">
+                                {suggestion.candidate_url}
+                              </a>
+                            </div>
+                            <div className="rounded-xl border border-vault-700 bg-vault-950 px-3 py-2">
+                              <p className="font-mono text-sm font-semibold text-vault-100">{Number(suggestion.confidence * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</p>
+                              <p className="mt-1 text-xs text-vault-500">{suggestion.match_method === 'gtin' ? 'GTIN / EAN' : 'Namensabgleich'}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-3 lg:justify-end">
+                              <MutationButton id={suggestion.id} label="Freigeben" pendingLabel="Wird freigegeben …" action={approveSuggestion} tone="neutral" icon="approve" iconOnly />
+                              <MutationButton id={suggestion.id} label="Ablehnen" pendingLabel="Wird abgelehnt …" action={rejectSuggestion} icon="reject" iconOnly />
+                            </div>
+                          </article>
+                        ))}
                       </div>
-                      <div className="flex flex-wrap gap-3 lg:justify-end">
-                        <MutationButton id={suggestion.id} label="Freigeben" pendingLabel="Wird freigegeben …" action={approveSuggestion} tone="neutral" icon="approve" iconOnly />
-                        <MutationButton id={suggestion.id} label="Ablehnen" pendingLabel="Wird abgelehnt …" action={rejectSuggestion} icon="reject" iconOnly />
-                      </div>
-                    </article>
+                    </section>
                   ))}
                 </div>
               ) : (
-                <p className="border-t border-vault-700 px-5 py-6 text-sm text-vault-300 sm:px-6">Keine offenen Vorschläge.</p>
+                <p className="border-t border-vault-700 px-5 py-6 text-sm text-vault-300 sm:px-6">Keine offenen Vorschläge</p>
               )}
             </div>
           </section>

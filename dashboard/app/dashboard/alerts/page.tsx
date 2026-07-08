@@ -4,7 +4,7 @@ import { BellRing, Trash2 } from 'lucide-react'
 import { AlertForm } from '@/components/ui/AlertForm'
 import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { currentTenant } from '@/lib/backend'
-import { planLimit } from '@/lib/plan-gates'
+import { hasPlan, planLimit } from '@/lib/plan-gates'
 import { createClient } from '@/lib/supabase/server'
 import type { Alert, Competitor, Product } from '@/lib/types'
 import { formatPrice } from '@/lib/utils'
@@ -20,6 +20,9 @@ const conditionLabels: Record<Alert['condition'], string> = {
   price_drop: 'Mitbewerberpreis gesunken',
   price_rise: 'Mitbewerberpreis gestiegen',
   source_broken: 'Preisquelle wiederholt fehlgeschlagen',
+  sale_started: 'Aktion gestartet (Mitbewerber reduziert)',
+  sale_ended: 'Aktion beendet',
+  map_violation: 'MAP-Verstoß erkannt',
 }
 
 export default async function AlertsPage() {
@@ -41,19 +44,25 @@ export default async function AlertsPage() {
   const deliveries = deliveryResult.data ?? []
   const alertLimit = planLimit(tenant?.plan).alerts
   const activeAlerts = alerts.filter((alert) => alert.active)
-  const statusAlerts = alerts.filter((alert) => ['out_of_stock', 'back_in_stock', 'source_broken'].includes(alert.condition))
+  const statusAlerts = alerts.filter((alert) => ['out_of_stock', 'back_in_stock', 'source_broken', 'sale_started', 'sale_ended', 'map_violation'].includes(alert.condition))
+  const advancedAlertsEnabled = hasPlan(tenant?.plan, 'pro')
+  const advancedConditions = ['back_in_stock', 'undercut_abs', 'price_drop', 'price_rise', 'source_broken', 'sale_started', 'sale_ended', 'map_violation']
+  const thresholdlessConditions = ['out_of_stock', 'back_in_stock', 'sale_started', 'sale_ended', 'map_violation']
 
   async function saveAction(formData: FormData) {
     'use server'
     if (!tenant) return { ok: false, message: 'Kein Mandant eingerichtet.' }
     const client = await createClient()
     const condition = String(formData.get('condition'))
+    if (!advancedAlertsEnabled && advancedConditions.includes(condition)) {
+      return { ok: false, message: 'Diese erweiterte Regel ist ab dem Pro-Plan verfügbar.' }
+    }
     const thresholdRaw = String(formData.get('threshold') ?? '').trim()
     const values = {
       product_id: String(formData.get('product_id') || '') || null,
       competitor_id: String(formData.get('competitor_id') || '') || null,
       condition,
-      threshold: ['out_of_stock', 'back_in_stock'].includes(condition) ? null : Number(thresholdRaw),
+      threshold: thresholdlessConditions.includes(condition) ? null : Number(thresholdRaw),
       threshold_unit: String(formData.get('threshold_unit') || 'absolute'),
       notify_email: String(formData.get('notify_email')),
       cooldown_h: Number(formData.get('cooldown_h')),
@@ -123,7 +132,7 @@ export default async function AlertsPage() {
                 Dein Plan nutzt {alerts.filter((alert) => alert.active).length} von {alertLimit} aktiven Preisalarmen.
               </p>
             )}
-            <AlertForm products={products} competitors={competitors} saveAction={saveAction} />
+            <AlertForm products={products} competitors={competitors} saveAction={saveAction} advancedEnabled={advancedAlertsEnabled} />
             </div>
           </section>
 
@@ -158,7 +167,7 @@ export default async function AlertsPage() {
                   <details className="mt-4 border-t border-vault-700 pt-4">
                     <summary className="cursor-pointer text-xs font-semibold text-vault-300 hover:text-merchant-success">Regel bearbeiten</summary>
                     <div className="mt-5">
-                      <AlertForm alert={alert} products={products} competitors={competitors} saveAction={saveAction} />
+                      <AlertForm alert={alert} products={products} competitors={competitors} saveAction={saveAction} advancedEnabled={advancedAlertsEnabled} />
                     </div>
                   </details>
                 </article>

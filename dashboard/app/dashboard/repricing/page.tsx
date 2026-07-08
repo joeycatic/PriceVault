@@ -5,14 +5,15 @@ import { MetricGrid, PageHeader } from '@/components/ui/MerchantUI'
 import { MutationButton } from '@/components/ui/MutationButton'
 import { backendFetch, currentTenant } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
-import type { Product, ProductVariant } from '@/lib/types'
+import type { Competitor, Product, ProductVariant } from '@/lib/types'
 import { formatPrice } from '@/lib/utils'
 
 type Rule = {
   id: string
   name: string
-  strategy: 'match_lowest' | 'beat_percent'
+  strategy: 'match_lowest' | 'beat_percent' | 'stay_above_percent'
   beat_by_pct: number
+  competitor_ids: string[] | null
   min_margin_pct: number
   approval_mode: 'manual' | 'automatic'
   max_change_pct: number
@@ -49,14 +50,16 @@ type RepricingChange = {
 export default async function RepricingPage() {
   const tenant = await currentTenant()
   const supabase = await createClient()
-  const [{ data: productData }, { data: variantData }] = tenant
+  const [{ data: productData }, { data: variantData }, { data: competitorData }] = tenant
     ? await Promise.all([
         supabase.from('products').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
         supabase.from('product_variants').select('*').eq('tenant_id', tenant.id).eq('active', true).order('name'),
+        supabase.from('competitors').select('*').eq('tenant_id', tenant.id).eq('active', true).order('shop_name'),
       ])
-    : [{ data: [] }, { data: [] }]
+    : [{ data: [] }, { data: [] }, { data: [] }]
   const products = (productData ?? []) as Product[]
   const variants = (variantData ?? []) as ProductVariant[]
+  const competitors = (competitorData ?? []) as Competitor[]
   let rules: Rule[] = []
   let suggestions: Suggestion[] = []
   let changes: RepricingChange[] = []
@@ -93,6 +96,7 @@ export default async function RepricingPage() {
         max_change_pct: Number(formData.get('max_change_pct') ?? 10),
         require_healthy_sources: formData.get('require_healthy_sources') === 'on',
         variant_id: String(formData.get('variant_id') || '') || null,
+        competitor_ids: formData.getAll('competitor_ids').map(String),
       }),
     })
     revalidatePath('/dashboard/repricing')
@@ -199,10 +203,24 @@ export default async function RepricingPage() {
                 <select className="field" name="strategy" defaultValue="match_lowest">
                   <option value="match_lowest">Niedrigsten Mitbewerberpreis übernehmen</option>
                   <option value="beat_percent">Niedrigsten Preis prozentual unterbieten</option>
+                  <option value="stay_above_percent">Über dem günstigsten Preis bleiben (+X %)</option>
                 </select>
               </label>
+              <fieldset className="rounded-lg border border-vault-700 bg-vault-950/70 p-4">
+                <legend className="field-label">Nur diese Mitbewerber berücksichtigen</legend>
+                <p className="mb-3 text-xs leading-5 text-vault-500">Leer lassen, um alle Mitbewerber einzubeziehen.</p>
+                <div className="grid gap-2">
+                  {competitors.map((competitor) => (
+                    <label key={competitor.id} className="flex items-center gap-3 text-sm text-vault-300">
+                      <input type="checkbox" name="competitor_ids" value={competitor.id} className="h-4 w-4" />
+                      {competitor.shop_name}
+                    </label>
+                  ))}
+                  {!competitors.length && <p className="text-xs text-vault-500">Noch keine aktiven Mitbewerber angelegt.</p>}
+                </div>
+              </fieldset>
               <div className="grid grid-cols-2 gap-4">
-                <label><span className="field-label">Unterbieten um %</span><input className="field" name="beat_by_pct" type="number" min="0" max="50" step="0.1" defaultValue="1" /></label>
+                <label><span className="field-label">Abstand über / unter günstigstem Preis (%)</span><input className="field" name="beat_by_pct" type="number" min="0" max="50" step="0.1" defaultValue="1" /></label>
                 <label><span className="field-label">Mindestmarge %</span><input className="field" name="min_margin_pct" type="number" min="0" max="500" step="0.1" required defaultValue="25" /></label>
               </div>
               <label>
@@ -243,7 +261,14 @@ export default async function RepricingPage() {
                           {rule.approval_mode === 'automatic' ? 'Auto-Anwendung' : 'Manuelle Freigabe'}
                         </span>
                       </div>
-                      <p className="mt-1 text-xs text-vault-500">{rule.strategy === 'match_lowest' ? 'Niedrigsten Preis übernehmen' : `${rule.beat_by_pct} % unterbieten`} · mindestens {rule.min_margin_pct} % Marge</p>
+                      <p className="mt-1 text-xs text-vault-500">
+                        {rule.strategy === 'match_lowest'
+                          ? 'Niedrigsten Preis übernehmen'
+                          : rule.strategy === 'stay_above_percent'
+                            ? `${rule.beat_by_pct} % über dem günstigsten Preis bleiben`
+                            : `${rule.beat_by_pct} % unterbieten`} · mindestens {rule.min_margin_pct} % Marge
+                      </p>
+                      {rule.competitor_ids?.length ? <p className="mt-2 text-xs text-vault-500">{rule.competitor_ids.length} Mitbewerber im Regel-Scope</p> : null}
                       {rule.approval_mode === 'automatic' && <p className="mt-2 text-xs text-vault-500">Maximal {rule.max_change_pct} % Änderung{rule.require_healthy_sources ? ' · nur gesunde Quellen' : ''}</p>}
                     </div>
                     <MutationButton id={rule.id} label="Deaktivieren" pendingLabel="Wird deaktiviert …" action={deactivate} />

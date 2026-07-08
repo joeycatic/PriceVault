@@ -11,21 +11,28 @@ export function AlertForm({
   products,
   competitors,
   saveAction,
+  advancedEnabled = true,
 }: {
   alert?: Alert
   products: Product[]
   competitors: Competitor[]
   saveAction: (formData: FormData) => Promise<ActionResult>
+  advancedEnabled?: boolean
 }) {
   const [pending, startTransition] = useTransition()
   const [result, setResult] = useState<ActionResult | null>(null)
   const [condition, setCondition] = useState(alert?.condition ?? 'below_pct')
-  const needsThreshold = !['out_of_stock', 'back_in_stock'].includes(condition)
+  const advancedConditions = ['back_in_stock', 'undercut_abs', 'price_drop', 'price_rise', 'source_broken', 'sale_started', 'sale_ended', 'map_violation']
+  const needsThreshold = !['out_of_stock', 'back_in_stock', 'sale_started', 'sale_ended', 'map_violation'].includes(condition)
   const supportsUnits = ['price_drop', 'price_rise'].includes(condition)
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const formData = new FormData(event.currentTarget)
+    if (!advancedEnabled && advancedConditions.includes(String(formData.get('condition')))) {
+      setResult({ ok: false, message: 'Diese erweiterte Regel ist ab dem Pro-Plan verfügbar.' })
+      return
+    }
     setResult(null)
     startTransition(async () => setResult(await saveAction(formData)))
   }
@@ -58,12 +65,15 @@ export function AlertForm({
             <option value="above_pct">Mitbewerber ist teurer um mehr als (%)</option>
             <option value="below_abs">Mitbewerber ist günstiger um mehr als (€)</option>
             <option value="above_abs">Mitbewerber ist teurer um mehr als (€)</option>
-            <option value="undercut_abs">Mitbewerber unterbietet dich um (€)</option>
-            <option value="price_drop">Mitbewerber senkt seinen Preis</option>
-            <option value="price_rise">Mitbewerber erhöht seinen Preis</option>
+            <option value="undercut_abs" disabled={!advancedEnabled}>Mitbewerber unterbietet dich um (€){advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="price_drop" disabled={!advancedEnabled}>Mitbewerber senkt seinen Preis{advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="price_rise" disabled={!advancedEnabled}>Mitbewerber erhöht seinen Preis{advancedEnabled ? '' : ' · Pro'}</option>
             <option value="out_of_stock">Quelle ist nicht mehr verfügbar</option>
-            <option value="back_in_stock">Quelle ist wieder verfügbar</option>
-            <option value="source_broken">Preisquelle schlägt wiederholt fehl</option>
+            <option value="back_in_stock" disabled={!advancedEnabled}>Quelle ist wieder verfügbar{advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="source_broken" disabled={!advancedEnabled}>Preisquelle schlägt wiederholt fehl{advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="sale_started" disabled={!advancedEnabled}>Aktion gestartet (Mitbewerber reduziert){advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="sale_ended" disabled={!advancedEnabled}>Aktion beendet{advancedEnabled ? '' : ' · Pro'}</option>
+            <option value="map_violation" disabled={!advancedEnabled}>MAP-Verstoß erkannt{advancedEnabled ? '' : ' · Pro'}</option>
           </select>
         </label>
         {needsThreshold ? (

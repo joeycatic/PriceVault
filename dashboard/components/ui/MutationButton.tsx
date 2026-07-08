@@ -1,13 +1,14 @@
 'use client'
 
-import { CheckCircle2, LoaderCircle, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle2, LoaderCircle, Trash2, WandSparkles, XCircle } from 'lucide-react'
 import { useState, useTransition } from 'react'
 
 type ActionResult = { ok: boolean; message: string }
-type MutationIcon = 'approve' | 'reject' | 'trash'
+type MutationIcon = 'approve' | 'reject' | 'sparkles' | 'trash'
 const icons = {
   approve: CheckCircle2,
   reject: XCircle,
+  sparkles: WandSparkles,
   trash: Trash2,
 }
 
@@ -29,7 +30,7 @@ export function MutationButton({
   iconOnly?: boolean
 }) {
   const [pending, startTransition] = useTransition()
-  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<ActionResult | null>(null)
   const VisibleIcon = pending ? LoaderCircle : icon ? icons[icon] : null
   const iconClassName = pending ? 'h-4 w-4 animate-spin' : 'h-4 w-4'
   const toneClassName = tone === 'danger'
@@ -43,11 +44,11 @@ export function MutationButton({
     <form
       onSubmit={(event) => {
         event.preventDefault()
-        setError(null)
+        setResult(null)
         const formData = new FormData(event.currentTarget)
         startTransition(async () => {
           const next = await action(formData)
-          if (!next.ok) setError(next.message)
+          setResult(next)
         })
       }}
     >
@@ -63,7 +64,11 @@ export function MutationButton({
         {VisibleIcon && <VisibleIcon className={iconClassName} aria-hidden="true" />}
         {iconOnly ? <span className="sr-only">{pending ? pendingLabel : label}</span> : <span>{pending ? pendingLabel : label}</span>}
       </button>
-      {error && <span className="mt-1 block text-xs text-red-700" role="alert">{error}</span>}
+      {result && (
+        <span className={`mt-1 block max-w-48 text-xs ${result.ok ? 'text-merchant-success' : 'text-red-700'}`} role={result.ok ? 'status' : 'alert'}>
+          {result.message}
+        </span>
+      )}
     </form>
   )
 }
